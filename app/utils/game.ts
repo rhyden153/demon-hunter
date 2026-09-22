@@ -428,10 +428,6 @@ export class demonsGame {
           bullet.bounces++
           this.burst(bullet.x, bullet.y, '#ceffe2', 4)
           if (this.distanceTo(this.player, bullet) < 420) this.onSound('bounce')
-          if (bullet.bounces >= 4) {
-            bullet.ttl = 0
-            break
-          }
         } else {
           bullet.x = nx
           bullet.y = ny

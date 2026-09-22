@@ -37,7 +37,7 @@ Touch controls appear on mobile devices. Settings include audio, visual effects,
 - Eliminate demons for 50 points; destroy portals for 250 points.
 - Destroy every portal and remaining enemy to clear a wave, earn 500 points, and restore one life (maximum three).
 - Later waves alternate maze orientation, introduce more portals, and increase enemy speed and toughness.
-- Only diagonal player shots ricochet off walls. Horizontal and vertical shots stop on impact. Diagonal bank shots expire after four seconds or eight reflections and cannot hurt the hunter.
+- Only diagonal player shots ricochet off walls. Horizontal and vertical shots stop on impact. Diagonal bank shots travel as far as straight shots, expiring after four seconds, and cannot hurt the hunter.
 - Each wave starts with zero demons, and portals spawn at random open locations in the maze. In the first Classic wave, portals begin releasing demons after six seconds, staggered three seconds apart. Their spawn intervals gradually shorten from 12 to 2 seconds over 100 seconds of active play. Later waves and Relentless mode increase the rate; pausing freezes the ramp. Destroying a portal stops its spawns. The live deamon population is capped at 65.
 - Dash briefly protects the hunter and recharges in three seconds. Walls block movement, even across world seams.
 - The ten best completed runs and preferences are saved in this browser's local storage. The leaderboard is local, with no account or server needed.

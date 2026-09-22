@@ -437,7 +437,7 @@ test('enemy projectiles are absorbed during invulnerability and own ricochets ar
   assert.equal(game.bullets[0]!.owner, 'player')
 })
 
-test('projectile lifetimes and bounce limits keep the world bounded', () => {
+test('projectile lifetimes expire shots, and ricochets are not bounce-limited', () => {
   const game = openWorld()
   game.bullets = [{ x: 120, y: 120, vx: 100, vy: 0, ttl: 0.02, owner: 'player', bounces: 0 }]
   game.update(0.04)
@@ -445,7 +445,8 @@ test('projectile lifetimes and bounce limits keep the world bounded', () => {
   game.grid[5]![8] = 1
   game.bullets = [{ x: 190, y: 132, vx: 100, vy: 40, ttl: 4, owner: 'player', bounces: 7 }]
   game.update(0.04)
-  assert.equal(game.bullets.length, 0)
+  assert.equal(game.bullets.length, 1)
+  assert.equal(game.bullets[0]!.bounces, 8)
 })
 
 test('pause freezes enemy fire and projectiles; wave transitions remove old shots', () => {
