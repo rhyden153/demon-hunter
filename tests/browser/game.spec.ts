@@ -102,12 +102,27 @@ test('settings are accessible and persist after reload', async ({ page }) => {
   await expect(page.getByLabel('Difficulty', { exact: true })).toHaveValue('hard')
 })
 
-test('a completed run is recorded once and survives reload', async ({ page }) => {
+test('death animates before game over, pauses, and records the run once', async ({ page }) => {
+  test.setTimeout(180000)
   await page.clock.install()
   await page.goto('/')
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()))
   await page.getByRole('button', { name: 'ENTER THE MAZE' }).click()
   await expect(page.locator('.arena-state')).toHaveText('MISSION IN PROGRESS')
-  await page.clock.runFor(35000)
+  // Random mazes and portal positions change how long it takes demons to arrive.
+  // Advance in steps shorter than the death animation so its visible state is checked.
+  for (let seconds = 0; seconds < 180; seconds++) {
+    await page.clock.runFor(1000)
+    if ((await page.locator('.arena-state').textContent())?.includes('ARMOR FAILURE')) break
+  }
+  await expect(page.locator('.arena-state')).toHaveText('ARMOR FAILURE')
+  await expect(page.getByRole('heading', { name: 'A good run, hunter.' })).not.toBeVisible()
+  await page.screenshot({ path: 'test-results/death-animation.png' })
+  await page.keyboard.press('Escape')
+  await page.clock.runFor(2000)
+  await expect(page.getByRole('heading', { name: 'Holding position.' })).toBeVisible()
+  await page.getByRole('button', { name: 'RESUME MISSION' }).click()
+  await page.clock.runFor(1800)
   await expect(page.getByRole('heading', { name: 'A good run, hunter.' })).toBeVisible()
   await page.getByRole('button', { name: /Leaderboard/ }).click()
   await expect(page.locator('.score-table tbody tr')).toHaveCount(1)

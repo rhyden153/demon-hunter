@@ -24,6 +24,7 @@ type Run = {
 }
 const canvas = ref<HTMLCanvasElement | null>(null)
 const arena = ref<HTMLElement | null>(null)
+const music = ref<HTMLAudioElement | null>(null)
 const view = ref('play')
 const settingsOpen = ref(false)
 const initialized = ref(false)
@@ -37,6 +38,7 @@ const state = ref<Snapshot>({
   score: 0,
   wave: 1,
   lives: 3,
+  shield: 0,
   enemies: 0,
   portals: 4,
   kills: 0,
@@ -45,7 +47,9 @@ const state = ref<Snapshot>({
   x: WORLD_WIDTH / 2,
   y: WORLD_HEIGHT / 2,
 })
-const active = computed(() => ['playing', 'paused', 'cleared'].includes(state.value.status))
+const active = computed(() =>
+  ['playing', 'paused', 'cleared', 'dying'].includes(state.value.status),
+)
 const elapsed = computed(
   () =>
     `${Math.floor(state.value.elapsed / 60)
@@ -61,6 +65,7 @@ const statusLabel = computed(
       playing: 'MISSION IN PROGRESS',
       paused: 'MISSION PAUSED',
       over: 'SIGNAL LOST',
+      dying: 'ARMOR FAILURE',
       cleared: 'SECTOR SECURED',
     })[state.value.status],
 )
@@ -74,6 +79,7 @@ let observer: ResizeObserver | null = null
 let returnFocus: HTMLElement | null = null
 function sync() {
   if (game) state.value = game.snapshot()
+  syncMusic()
 }
 watch([sound, effects, difficulty], () => {
   try {
@@ -85,7 +91,13 @@ watch([sound, effects, difficulty], () => {
     /* Storage is optional. */
   }
   if (game) game.effects = effects.value
+  syncMusic()
 })
+function syncMusic() {
+  if (!music.value) return
+  if (sound.value && state.value.status === 'playing') music.value.play().catch(() => {})
+  else music.value.pause()
+}
 function initAudio() {
   if (!sound.value) return
   try {
@@ -105,23 +117,28 @@ function playSound(type: string) {
     hit: 150,
     portal: 110,
     hurt: 75,
+    death: 260,
     wave: 540,
     dash: 300,
     enemyShoot: 230,
     bounce: 920,
   }
-  oscillator.type = type === 'shoot' ? 'triangle' : 'square'
+  const duration = type === 'death' ? 0.65 : 0.16
+  oscillator.type = type === 'death' ? 'sawtooth' : type === 'shoot' ? 'triangle' : 'square'
   oscillator.frequency.setValueAtTime(frequency[type] || 200, now)
-  oscillator.frequency.exponentialRampToValueAtTime(type === 'wave' ? 850 : 40, now + 0.13)
+  oscillator.frequency.exponentialRampToValueAtTime(
+    type === 'wave' ? 850 : 40,
+    now + duration * 0.8,
+  )
   gain.gain.setValueAtTime(
     type === 'bounce' ? 0.008 : type === 'enemyShoot' ? 0.012 : type === 'shoot' ? 0.022 : 0.04,
     now,
   )
-  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16)
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration)
   oscillator.connect(gain)
   gain.connect(audioContext.destination)
   oscillator.start(now)
-  oscillator.stop(now + 0.17)
+  oscillator.stop(now + duration + 0.01)
 }
 function start() {
   if (!game) return
@@ -130,6 +147,7 @@ function start() {
   game.difficulty = difficulty.value
   game.start()
   recorded = false
+  if (music.value) music.value.currentTime = 0
   sync()
   nextTick(() => canvas.value?.focus())
 }
@@ -139,14 +157,14 @@ function pause() {
   if (game?.status === 'playing') canvas.value?.focus()
 }
 function changeView(next: string) {
-  if (game && ['playing', 'cleared'].includes(game.status)) {
+  if (game && ['playing', 'cleared', 'dying'].includes(game.status)) {
     game.togglePause()
     sync()
   }
   view.value = next
 }
 function openSettings() {
-  if (game && ['playing', 'cleared'].includes(game.status)) {
+  if (game && ['playing', 'cleared', 'dying'].includes(game.status)) {
     game.togglePause()
     sync()
   }
@@ -220,7 +238,7 @@ function keyUp(event: KeyboardEvent) {
   game?.keys.delete(event.key.toLowerCase())
 }
 function loseFocus() {
-  if (game && ['playing', 'cleared'].includes(game.status)) {
+  if (game && ['playing', 'cleared', 'dying'].includes(game.status)) {
     game.togglePause()
     sync()
   }
@@ -334,6 +352,7 @@ onMounted(() => {
   game = new demonsGame()
   game.effects = effects.value
   game.onSound = playSound
+  if (music.value) music.value.volume = 0.35
   resize()
   observer = new ResizeObserver(resize)
   if (canvas.value) observer.observe(canvas.value)
@@ -348,6 +367,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   cancelAnimationFrame(frame)
   observer?.disconnect()
+  music.value?.pause()
   void audioContext?.close()
   window.removeEventListener('keydown', keyDown)
   window.removeEventListener('keyup', keyUp)
@@ -449,7 +469,15 @@ onBeforeUnmount(() => {
                   :size="18"
                   :class="{ lost: n > state.lives }"
                 />
+                <span v-if="state.lives > 3" class="extra-lives">+{{ state.lives - 3 }}</span>
               </div>
+              <span
+                v-if="state.shield"
+                class="shield-charges"
+                :aria-label="`${state.shield} shield hits remaining`"
+              >
+                <GameIcon name="shield" :size="12" /> {{ state.shield }} / 3
+              </span>
             </div>
             <div class="wave-tracker">
               <div>
@@ -472,13 +500,14 @@ onBeforeUnmount(() => {
             <button
               class="icon-button pause-button"
               :aria-label="state.status === 'paused' ? 'Resume game' : 'Pause game'"
-              :disabled="!['playing', 'paused'].includes(state.status)"
+              :disabled="!['playing', 'paused', 'dying'].includes(state.status)"
               @click="pause"
             >
               <GameIcon :name="state.status === 'paused' ? 'play' : 'pause'" :size="18" />
             </button>
           </div>
           <div class="arena-screen" :class="{ 'is-ready': state.status === 'ready' }">
+            <audio ref="music" src="/audio/sector-death.mp3" loop preload="auto"></audio>
             <canvas
               ref="canvas"
               :width="WIDTH"
@@ -585,7 +614,7 @@ onBeforeUnmount(() => {
               </button>
               <button
                 :aria-label="state.status === 'paused' ? 'Touch resume' : 'Touch pause'"
-                :disabled="!['playing', 'paused', 'cleared'].includes(state.status)"
+                :disabled="!['playing', 'paused', 'cleared', 'dying'].includes(state.status)"
                 @click="pause"
               >
                 <GameIcon :name="state.status === 'paused' ? 'play' : 'pause'" :size="15" />
@@ -648,12 +677,27 @@ onBeforeUnmount(() => {
             <div class="card-eyebrow">KNOW YOUR ENEMY <span>+</span></div>
             <div class="entity-row">
               <CharacterPortrait kind="hunter" />
-              <div><strong>You, the hunter</strong><span>Shoot the demons, close the portals</span></div>
+              <div>
+                <strong>You, the hunter</strong><span>Shoot the demons, close the portals</span>
+              </div>
               <span class="entity-badge green">01</span>
             </div>
             <div class="entity-row">
               <CharacterPortrait kind="demon" />
-              <div><strong>The demons</strong><span>They hunt. They shoot.</span></div>
+              <div><strong>Ravager</strong><span>Always hunting. Always hostile.</span></div>
+              <span class="entity-points">50 PT</span>
+            </div>
+            <div class="entity-row">
+              <CharacterPortrait kind="watcher" />
+              <div><strong>Watcher</strong><span>Sees you once. Hunts you forever.</span></div>
+              <span class="entity-points">50 PT</span>
+            </div>
+            <div class="entity-row">
+              <CharacterPortrait kind="lurker" />
+              <div>
+                <strong>Lurker</strong
+                ><span>Almost blind. Will attack you if you get too close.</span>
+              </div>
               <span class="entity-points">50 PT</span>
             </div>
             <div class="entity-row">
@@ -690,8 +734,9 @@ onBeforeUnmount(() => {
           <div class="eyebrow">FIELD MANUAL / 01</div>
           <h2>Stay sharp.<br />Stay in motion.</h2>
           <p>
-            You're the hooded hunter in mint armor. The horned demons are hunting you. Fiery portals
-            keep making more. Destroy every portal and eliminate the remaining demons to advance.
+            You're the hunter in green combat armor and a sealed helmet, carrying a rifle. The
+            demons are hunting you. Fiery portals keep making more. Destroy every portal and
+            eliminate the remaining demons to advance.
           </p>
           <button class="primary-button" @click="active ? changeView('play') : start()">
             {{ active ? 'BACK TO MISSION' : 'READY TO DEPLOY' }}<GameIcon name="arrow" :size="18" />
@@ -704,8 +749,8 @@ onBeforeUnmount(() => {
             <p>
               Move with <b>arrow keys</b> through a maze nine times the screen area. The camera
               follows you, and every edge <b>wraps to the opposite side</b>. There's no map — learn
-              the maze as you go. Hold <b>Shift</b> while moving to dash; it recharges in three
-              seconds.
+              the maze as you go. Each wave randomly picks one of <b>six maze layouts</b>, all the
+              same size. Hold <b>Shift</b> while moving to dash; it recharges in three seconds.
             </p>
           </article>
           <article>
@@ -715,18 +760,25 @@ onBeforeUnmount(() => {
               Hold <b>W A S D</b> to shoot in a direction, including diagonally. Or aim with your
               <b>mouse</b> and hold the primary button to fire. <b>Space</b> fires in your current
               direction. Only diagonal shots <b>bounce off walls</b>, allowing bank shots around
-              corners. Horizontal and vertical shots stop at walls. Shots last four seconds or up to
-              four reflections.
+              corners. Horizontal and vertical shots stop at walls. Diagonal shots keep ricocheting
+              until their 3.2-second fuse runs out.
             </p>
           </article>
           <article>
             <span class="manual-number">03 / THE ENEMY</span>
             <h3>Go for the source.</h3>
             <p>
-              demons follow you and <b>fire orange shots</b> when they can see you. Their shots stop
-              at walls; your diagonal shots ricochet. Each kill earns <b>50 points</b>. Portals take
-              several hits and are worth <b>250 points</b>. Each wave starts with no demons. Portals
-              release them slowly at first, then faster the longer you survive.
+              Hostile demons follow you and <b>fire orange shots</b> when they can see you. Their
+              shots stop at walls; your diagonal shots ricochet. Each kill earns <b>50 points</b>.
+              Portals take several hits and are worth <b>250 points</b>. Each wave starts with no
+              demons. Portals release them slowly at first, then faster the longer you survive.
+            </p>
+            <p>
+              All three types spawn equally often. <b>Red Ravagers</b> always hunt you.
+              <b>Violet Watchers</b> wander randomly until they see you, then keep hunting even
+              through cover. <b>Amber Lurkers</b> wander until they see you within a
+              <b>seven-square radius</b>. They keep chasing beyond that range until you break line
+              of sight, then return to wandering.
             </p>
           </article>
           <article>
@@ -737,6 +789,13 @@ onBeforeUnmount(() => {
               briefly protects you, and your own ricochets are harmless to you. Clear a wave for
               <b>500 bonus points</b> and one restored life, up to three. Later waves get faster and
               tougher.
+            </p>
+            <p>
+              From <b>wave 4</b>, find a blue shield in the maze to absorb <b>three demon hits</b>,
+              including shots and contact. Unused protection carries into the next wave; another
+              shield refills it to three hits. From <b>wave 5</b>, find a pink heart for an
+              <b>extra life</b>, even above three. One of each unlocked pickup appears at a random
+              location each wave. Walk over it to collect it.
             </p>
           </article>
         </div>

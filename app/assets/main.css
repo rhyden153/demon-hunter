@@ -734,6 +734,17 @@ main {
 .field-card .card-eyebrow > span:last-child {
   font-size: 15px;
 }
+.extra-lives {
+  color: #ff91b4;
+  font: 12px var(--mono);
+}
+.shield-charges {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #79dfff;
+  font: 10px var(--mono);
+}
 .entity-row {
   display: flex;
   align-items: center;

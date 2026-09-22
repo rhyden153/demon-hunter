@@ -1,4 +1,5 @@
-import { drawDemon, drawHunter, drawPortal } from './characters.ts'
+import { drawDemon, drawHunter, drawHunterDeath, drawPortal, drawPickup } from './characters.ts'
+import type { DemonKind } from './characters.ts'
 import {
   COLS,
   ROWS,
@@ -12,12 +13,24 @@ import {
   wrap,
   wrappedDelta,
   createMaze,
+  MAZE_COUNT,
 } from './maze.ts'
 
-export type GameStatus = 'ready' | 'playing' | 'paused' | 'over' | 'cleared'
+export type GameStatus = 'ready' | 'playing' | 'paused' | 'dying' | 'over' | 'cleared'
+export const DEATH_DURATION = 1.6
 export type Point = { x: number; y: number }
-type Enemy = Point & { id: number; hp: number; speed: number; phase: number; fireCooldown: number }
+type Enemy = Point & {
+  id: number
+  hp: number
+  speed: number
+  phase: number
+  fireCooldown: number
+  kind: DemonKind
+  aggressive: boolean
+  wanderTarget: Point | null
+}
 type Portal = Point & { hp: number; timer: number }
+type Pickup = Point & { kind: 'shield' | 'life' }
 type Bullet = Point & {
   vx: number
   vy: number
@@ -31,6 +44,7 @@ export type Snapshot = {
   score: number
   wave: number
   lives: number
+  shield: number
   enemies: number
   portals: number
   kills: number
@@ -44,10 +58,13 @@ export class demonsGame {
   status: GameStatus = 'ready'
   score = 0
   wave = 1
+  mazeIndex = 0
   lives = 3
+  shield = 0
   kills = 0
   elapsed = 0
   dashCooldown = 0
+  deathElapsed = 0
   player = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2, angle: -Math.PI / 2, invulnerable: 0 }
   keys = new Set<string>()
   pointer: Point | null = null
@@ -55,12 +72,13 @@ export class demonsGame {
   grid: number[][] = []
   enemies: Enemy[] = []
   portals: Portal[] = []
+  pickups: Pickup[] = []
   bullets: Bullet[] = []
   particles: Particle[] = []
   difficulty: 'normal' | 'hard' = 'normal'
   effects = true
   onSound: (
-    type: 'shoot' | 'hit' | 'portal' | 'hurt' | 'wave' | 'dash' | 'enemyShoot' | 'bounce',
+    type: 'shoot' | 'hit' | 'portal' | 'hurt' | 'death' | 'wave' | 'dash' | 'enemyShoot' | 'bounce',
   ) => void = () => {}
   private cooldown = 0
   private pathTimer = 0
@@ -68,7 +86,8 @@ export class demonsGame {
   private clearTimer = 0
   private waveElapsed = 0
   private nextId = 0
-  private pausedStatus: 'playing' | 'cleared' = 'playing'
+  private spawnBag: DemonKind[] = []
+  private pausedStatus: 'playing' | 'cleared' | 'dying' = 'playing'
 
   constructor() {
     this.buildWave()
@@ -80,6 +99,7 @@ export class demonsGame {
       score: this.score,
       wave: this.wave,
       lives: this.lives,
+      shield: this.shield,
       enemies: this.enemies.length,
       portals: this.portals.length,
       kills: this.kills,
@@ -94,6 +114,7 @@ export class demonsGame {
     this.score = 0
     this.wave = 1
     this.lives = 3
+    this.shield = 0
     this.kills = 0
     this.elapsed = 0
     this.dashCooldown = 0
@@ -104,7 +125,7 @@ export class demonsGame {
   }
 
   togglePause() {
-    if (this.status === 'playing' || this.status === 'cleared') {
+    if (this.status === 'playing' || this.status === 'cleared' || this.status === 'dying') {
       this.pausedStatus = this.status
       this.status = 'paused'
     } else if (this.status === 'paused') this.status = this.pausedStatus
@@ -113,12 +134,15 @@ export class demonsGame {
   }
 
   buildWave() {
+    this.deathElapsed = 0
     this.waveElapsed = 0
-    this.grid = createMaze(this.wave)
+    this.mazeIndex = Math.floor(Math.random() * MAZE_COUNT)
+    this.grid = createMaze(this.mazeIndex)
     this.player = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2, angle: -Math.PI / 2, invulnerable: 2 }
     this.bullets = []
     this.particles = []
     this.enemies = []
+    this.spawnBag = []
     this.portals = this.randomPortalLocations(Math.min(3 + this.wave, 6)).map((point, i) => ({
       ...point,
       hp: 6 + this.wave,
@@ -127,6 +151,41 @@ export class demonsGame {
     this.cooldown = 0
     this.pathTimer = 0
     this.updatePaths()
+    this.pickups = []
+    if (this.wave > 3) this.spawnPickup('shield')
+    if (this.wave > 4) this.spawnPickup('life')
+  }
+
+  private spawnPickup(kind: Pickup['kind']) {
+    const spots: Point[] = []
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const point = { x: (x + 0.5) * TILE, y: (y + 0.5) * TILE }
+        if (this.distance[y]![x] === 999 || !this.canMove(point.x, point.y)) continue
+        if (this.distanceTo(point, this.player) < 6 * TILE) continue
+        if (
+          [...this.portals, ...this.pickups].some(
+            (other) => this.distanceTo(point, other) < 2 * TILE,
+          )
+        )
+          continue
+        spots.push(point)
+      }
+    }
+    const point = spots[Math.floor(Math.random() * spots.length)]
+    if (point) this.pickups.push({ ...point, kind })
+  }
+
+  private collectPickups() {
+    this.pickups = this.pickups.filter((pickup) => {
+      if (this.distanceTo(this.player, pickup) >= 15 || !this.lineOfSight(this.player, pickup))
+        return true
+      if (pickup.kind === 'shield') this.shield = 3
+      else this.lives++
+      this.burst(pickup.x, pickup.y, pickup.kind === 'shield' ? '#79dfff' : '#ff91b4', 18)
+      this.onSound('wave')
+      return false
+    })
   }
 
   private randomPortalLocations(count: number): Point[] {
@@ -180,6 +239,15 @@ export class demonsGame {
 
   private spawnEnemy(x: number, y: number) {
     if (this.enemies.length >= 65 || this.wallAt(x, y)) return
+    // Each shuffled group contains one of each type, sharing the existing spawn rate.
+    if (!this.spawnBag.length) {
+      this.spawnBag = ['ravager', 'watcher', 'lurker']
+      for (let i = this.spawnBag.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[this.spawnBag[i], this.spawnBag[j]] = [this.spawnBag[j]!, this.spawnBag[i]!]
+      }
+    }
+    const kind = this.spawnBag.pop()!
     this.enemies.push({
       x,
       y,
@@ -188,7 +256,34 @@ export class demonsGame {
       speed: (39 + this.wave * 4) * (this.difficulty === 'hard' ? 1.3 : 1),
       phase: Math.random() * 6.28,
       fireCooldown: 1.2 + Math.random() * 1.8,
+      kind,
+      aggressive: kind === 'ravager',
+      wanderTarget: null,
     })
+  }
+
+  private wander(enemy: Enemy, dt: number) {
+    const cx = Math.floor(enemy.x / TILE),
+      cy = Math.floor(enemy.y / TILE)
+    // Recenter after a chase before choosing a corridor, preventing corner snags.
+    if (!enemy.wanderTarget) enemy.wanderTarget = { x: (cx + 0.5) * TILE, y: (cy + 0.5) * TILE }
+    if (this.distanceTo(enemy, enemy.wanderTarget) < 0.01) {
+      const exits = [
+        { x: (cx + 1.5) * TILE, y: (cy + 0.5) * TILE },
+        { x: (cx - 0.5) * TILE, y: (cy + 0.5) * TILE },
+        { x: (cx + 0.5) * TILE, y: (cy + 1.5) * TILE },
+        { x: (cx + 0.5) * TILE, y: (cy - 0.5) * TILE },
+      ].filter((point) => this.canMove(point.x, point.y, 6))
+      if (!exits.length) return
+      enemy.wanderTarget = exits[Math.floor(Math.random() * exits.length)]!
+    }
+    const dx = wrappedDelta(enemy.wanderTarget.x - enemy.x, WORLD_WIDTH),
+      dy = wrappedDelta(enemy.wanderTarget.y - enemy.y, WORLD_HEIGHT),
+      distance = Math.hypot(dx, dy)
+    if (distance > 0) {
+      const step = Math.min(distance, enemy.speed * dt)
+      this.move(enemy, (dx / distance) * step, (dy / distance) * step, 6)
+    }
   }
 
   wallAt(x: number, y: number) {
@@ -273,6 +368,11 @@ export class demonsGame {
 
   update(dt: number) {
     dt = Math.min(dt, 0.04)
+    if (this.status === 'dying') {
+      this.deathElapsed = Math.min(DEATH_DURATION, this.deathElapsed + dt)
+      if (this.deathElapsed >= DEATH_DURATION) this.status = 'over'
+      return
+    }
     if (this.status === 'cleared') {
       this.clearTimer -= dt
       if (this.clearTimer <= 0) {
@@ -297,10 +397,12 @@ export class demonsGame {
       my /= length
     }
     this.move(this.player, mx * 150 * dt, my * 150 * dt)
+    this.collectPickups()
     if (this.keys.has('shift') && this.dashCooldown <= 0 && length) {
       for (let i = 0; i < 18; i++) {
         this.burst(this.player.x, this.player.y, '#91efbd', 1)
         this.move(this.player, mx * 5, my * 5)
+        this.collectPickups()
       }
       this.dashCooldown = 3
       this.player.invulnerable = Math.max(this.player.invulnerable, 0.35)
@@ -326,7 +428,7 @@ export class demonsGame {
         y: this.player.y,
         vx: vx * 440,
         vy: vy * 440,
-        ttl: 4,
+        ttl: 3.2, // 20% shorter range than before
         owner: 'player',
         bounces: 0,
       })
@@ -346,37 +448,48 @@ export class demonsGame {
       this.pathTimer = 0.3
     }
     for (const enemy of this.enemies) {
-      const cx = Math.floor(enemy.x / TILE),
-        cy = Math.floor(enemy.y / TILE)
-      let tx = this.player.x,
-        ty = this.player.y
-      if (this.distanceTo(enemy, this.player) > TILE) {
-        let best = this.distance[cy]?.[cx] ?? 999
-        tx = (cx + 0.5) * TILE
-        ty = (cy + 0.5) * TILE
-        for (const [dx = 0, dy = 0] of [
-          [1, 0],
-          [0, 1],
-          [-1, 0],
-          [0, -1],
-        ]) {
-          const distance = this.distance[wrap(cy + dy, ROWS)]![wrap(cx + dx, COLS)]!
-          if (distance < best) {
-            best = distance
-            tx = (cx + dx + 0.5) * TILE
-            ty = (cy + dy + 0.5) * TILE
+      if (enemy.kind === 'ravager') enemy.aggressive = true
+      else if (enemy.kind === 'watcher') enemy.aggressive ||= this.lineOfSight(enemy, this.player)
+      else
+        enemy.aggressive =
+          (enemy.aggressive || this.distanceTo(enemy, this.player) <= 7 * TILE) &&
+          this.lineOfSight(enemy, this.player)
+      if (!enemy.aggressive) this.wander(enemy, dt)
+      else {
+        enemy.wanderTarget = null
+        const cx = Math.floor(enemy.x / TILE),
+          cy = Math.floor(enemy.y / TILE)
+        let tx = this.player.x,
+          ty = this.player.y
+        if (this.distanceTo(enemy, this.player) > TILE) {
+          let best = this.distance[cy]?.[cx] ?? 999
+          tx = (cx + 0.5) * TILE
+          ty = (cy + 0.5) * TILE
+          for (const [dx = 0, dy = 0] of [
+            [1, 0],
+            [0, 1],
+            [-1, 0],
+            [0, -1],
+          ]) {
+            const distance = this.distance[wrap(cy + dy, ROWS)]![wrap(cx + dx, COLS)]!
+            if (distance < best) {
+              best = distance
+              tx = (cx + dx + 0.5) * TILE
+              ty = (cy + dy + 0.5) * TILE
+            }
           }
         }
+        const dx = wrappedDelta(tx - enemy.x, WORLD_WIDTH),
+          dy = wrappedDelta(ty - enemy.y, WORLD_HEIGHT),
+          dist = Math.hypot(dx, dy)
+        if (dist > 1)
+          this.move(enemy, (dx / dist) * enemy.speed * dt, (dy / dist) * enemy.speed * dt, 6)
       }
-      const dx = wrappedDelta(tx - enemy.x, WORLD_WIDTH),
-        dy = wrappedDelta(ty - enemy.y, WORLD_HEIGHT),
-        dist = Math.hypot(dx, dy)
-      if (dist > 1)
-        this.move(enemy, (dx / dist) * enemy.speed * dt, (dy / dist) * enemy.speed * dt, 6)
       const playerDistance = this.distanceTo(enemy, this.player)
       if (playerDistance < 17) this.damagePlayer()
       if (this.lives <= 0) return
-      enemy.fireCooldown -= dt
+      enemy.fireCooldown = Math.max(0, enemy.fireCooldown - dt)
+      if (!enemy.aggressive) continue
       if (enemy.fireCooldown <= 0) {
         if (playerDistance < 420 && this.lineOfSight(enemy, this.player)) {
           const angle = Math.atan2(
@@ -428,10 +541,6 @@ export class demonsGame {
           bullet.bounces++
           this.burst(bullet.x, bullet.y, '#ceffe2', 4)
           if (this.distanceTo(this.player, bullet) < 420) this.onSound('bounce')
-          if (bullet.bounces >= 4) {
-            bullet.ttl = 0
-            break
-          }
         } else {
           bullet.x = nx
           bullet.y = ny
@@ -481,7 +590,7 @@ export class demonsGame {
     this.particles = this.particles.filter((p) => p.ttl > 0)
     if (!this.portals.length && !this.enemies.length) {
       this.score += 500
-      this.lives = Math.min(3, this.lives + 1)
+      if (this.lives < 3) this.lives++
       this.status = 'cleared'
       this.clearTimer = 2.5
       this.onSound('wave')
@@ -490,15 +599,24 @@ export class demonsGame {
 
   private damagePlayer() {
     if (this.player.invulnerable > 0 || this.status !== 'playing') return
-    this.lives--
     this.player.invulnerable = 2.2
+    if (this.shield > 0) {
+      this.shield--
+      this.burst(this.player.x, this.player.y, '#79dfff', 18)
+      this.onSound('bounce')
+      return
+    }
+    this.lives--
     this.burst(this.player.x, this.player.y, '#ff785a', 24)
-    this.onSound('hurt')
     if (this.lives <= 0) {
-      this.status = 'over'
+      this.status = 'dying'
+      this.deathElapsed = 0
       this.keys.clear()
       this.firing = false
-    }
+      this.bullets = []
+      this.particles = []
+      this.onSound('death')
+    } else this.onSound('hurt')
   }
 
   draw(ctx: CanvasRenderingContext2D, time: number) {
@@ -556,6 +674,15 @@ export class demonsGame {
         ctx.stroke()
       }
     }
+    for (const pickup of this.pickups) {
+      const screen = this.worldToScreen(pickup)
+      if (screen.x < -20 || screen.x > WIDTH + 20 || screen.y < -20 || screen.y > HEIGHT + 20)
+        continue
+      ctx.save()
+      ctx.translate(screen.x, screen.y)
+      drawPickup(ctx, pickup.kind, time, this.effects)
+      ctx.restore()
+    }
     for (const worldPortal of this.portals) {
       const portal = { ...worldPortal, ...this.worldToScreen(worldPortal) }
       if (portal.x < -30 || portal.x > WIDTH + 30 || portal.y < -30 || portal.y > HEIGHT + 30)
@@ -577,25 +704,44 @@ export class demonsGame {
       drawDemon(
         ctx,
         this.effects ? Math.sin(time * 9 + enemy.phase) * 1.2 : 0,
-        enemy.fireCooldown < 0.35,
+        enemy.aggressive && enemy.fireCooldown < 0.35,
         enemy.hp > 1,
         this.effects,
+        enemy.kind,
       )
       ctx.restore()
     }
     ctx.save()
     ctx.translate(WIDTH / 2, HEIGHT / 2)
+    if (this.shield > 0) {
+      ctx.strokeStyle = '#79dfff'
+      ctx.lineWidth = 1.5
+      for (let i = 0; i < this.shield; i++) {
+        ctx.beginPath()
+        ctx.arc(
+          0,
+          0,
+          19,
+          -Math.PI / 2 + (i * Math.PI * 2) / 3 + 0.1,
+          -Math.PI / 2 + ((i + 1) * Math.PI * 2) / 3 - 0.1,
+        )
+        ctx.stroke()
+      }
+    }
     if (this.status === 'playing' && this.player.invulnerable > 0 && Math.floor(time * 12) % 2)
       ctx.globalAlpha = 0.45
     const moving =
       this.status === 'playing' &&
       ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].some((key) => this.keys.has(key))
-    drawHunter(
-      ctx,
-      this.player.angle,
-      this.effects && moving ? Math.sin(time * 14) * 1.2 : 0,
-      this.effects,
-    )
+    if (this.lives <= 0)
+      drawHunterDeath(ctx, this.deathElapsed / DEATH_DURATION, this.player.angle, this.effects)
+    else
+      drawHunter(
+        ctx,
+        this.player.angle,
+        this.effects && moving ? Math.sin(time * 14) * 1.2 : 0,
+        this.effects,
+      )
     ctx.restore()
     if (this.status === 'ready') {
       ctx.fillStyle = '#a1b0aa'

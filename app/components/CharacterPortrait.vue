@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { drawDemon, drawHunter, drawPortal } from '../utils/characters'
 
-const props = defineProps<{ kind: 'hunter' | 'demon' | 'portal' }>()
+const props = defineProps<{ kind: 'hunter' | 'demon' | 'watcher' | 'lurker' | 'portal' }>()
 const canvas = ref<HTMLCanvasElement | null>(null)
 onMounted(() => {
   const element = canvas.value
@@ -17,7 +17,7 @@ onMounted(() => {
   ctx.scale(scale, scale)
   if (props.kind === 'hunter') drawHunter(ctx, -0.4)
   else if (props.kind === 'portal') drawPortal(ctx, 0, false)
-  else drawDemon(ctx)
+  else drawDemon(ctx, 0, false, false, false, props.kind === 'demon' ? 'ravager' : props.kind)
 })
 </script>
 
