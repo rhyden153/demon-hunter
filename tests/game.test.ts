@@ -26,7 +26,7 @@ test('the last hit plays death once, freezes combat, then ends the run', () => {
     game.score = 150
     game.enemies = [enemyAt(game.player.x + (attack === 'contact' ? 0 : 80), game.player.y)]
     if (attack === 'shot')
-      game.bullets = [{ ...game.player, vx: 0, vy: 0, ttl: 1, owner: 'enemy', bounces: 0 }]
+      game.bullets = [{ ...game.player, vx: 0, vy: 0, ttl: 1, owner: 'enemy' }]
     const sounds: string[] = []
     game.onSound = (sound) => sounds.push(sound)
     game.update(0.01)
@@ -549,12 +549,11 @@ test('both kinds of projectiles wrap horizontally and vertically', () => {
   for (const owner of ['player', 'enemy'] as const) {
     const game = openWorld()
     game.bullets = [
-      { x: WORLD_WIDTH - 1, y: WORLD_HEIGHT - 1, vx: 200, vy: 200, ttl: 4, owner, bounces: 0 },
+      { x: WORLD_WIDTH - 1, y: WORLD_HEIGHT - 1, vx: 200, vy: 200, ttl: 4, owner },
     ]
     game.update(0.04)
     assert.ok(Math.abs(game.bullets[0]!.x - 7) < 0.001)
     assert.ok(Math.abs(game.bullets[0]!.y - 7) < 0.001)
-    assert.equal(game.bullets[0]!.bounces, 0)
   }
 })
 
@@ -569,11 +568,9 @@ test('ricochets reflect the struck wall face and preserve the tangent velocity',
       vy: axis === 'x' ? 40 : 100,
       ttl: 4,
       owner: 'player' as const,
-      bounces: 0,
     }
     game.bullets = [bullet]
     tick(game, 0.15)
-    assert.equal(bullet.bounces, 1)
     assert.equal(axis === 'x' ? bullet.vx : bullet.vy, -100)
     assert.equal(axis === 'x' ? bullet.vy : bullet.vx, 40)
     assert.ok(!game.wallAt(bullet.x, bullet.y))
@@ -594,13 +591,11 @@ test('shots reflect at convex and concave corners without tunneling or sticking'
       vy: 100,
       ttl: 4,
       owner: 'player' as const,
-      bounces: 0,
     }
     game.bullets = [bullet]
     game.update(0.04)
     assert.equal(bullet.vx, -100)
     assert.equal(bullet.vy, -100)
-    assert.equal(bullet.bounces, 1)
     assert.ok(bullet.x < 190 && bullet.y < 190)
   }
 })
@@ -610,10 +605,9 @@ test('a diagonal bank shot kills an enemy behind a corner obstruction', () => {
   game.grid[7]![7] = 1 // Direct fire from (120,180) to (240,180) is blocked.
   for (let x = 4; x <= 12; x++) game.grid[4]![x] = 1 // Bank off the ceiling.
   game.enemies = [enemyAt(240, 180)]
-  const bullet = { x: 120, y: 180, vx: 140, vy: -140, ttl: 4, owner: 'player' as const, bounces: 0 }
+  const bullet = { x: 120, y: 180, vx: 140, vy: -140, ttl: 4, owner: 'player' as const }
   game.bullets = [bullet]
   tick(game, 0.95)
-  assert.equal(bullet.bounces, 1)
   assert.equal(game.kills, 1)
   assert.equal(game.score, 50)
 })
@@ -640,7 +634,6 @@ test('ricochets and enemy shots respect walls across the world seam', () => {
       vy: 100,
       ttl: 4,
       owner,
-      bounces: 0,
     }
     game.bullets = [bullet]
     game.update(0.04)
@@ -697,7 +690,7 @@ test('enemy projectiles are absorbed during invulnerability and own ricochets ar
   const game = openWorld()
   game.player.invulnerable = 1
   for (const owner of ['player', 'enemy'] as const)
-    game.bullets.push({ x: 110, y: 180, vx: 100, vy: 0, ttl: 3, owner, bounces: 1 })
+    game.bullets.push({ x: 110, y: 180, vx: 100, vy: 0, ttl: 3, owner })
   tick(game, 0.2)
   assert.equal(game.lives, 3)
   assert.equal(game.bullets.length, 1)
@@ -706,14 +699,13 @@ test('enemy projectiles are absorbed during invulnerability and own ricochets ar
 
 test('projectile lifetimes expire shots; player shots have no bounce limit', () => {
   const game = openWorld()
-  game.bullets = [{ x: 120, y: 120, vx: 100, vy: 0, ttl: 0.02, owner: 'player', bounces: 0 }]
+  game.bullets = [{ x: 120, y: 120, vx: 100, vy: 0, ttl: 0.02, owner: 'player' }]
   game.update(0.04)
   assert.equal(game.bullets.length, 0)
   game.grid[5]![8] = 1
-  game.bullets = [{ x: 190, y: 132, vx: 100, vy: 40, ttl: 4, owner: 'player', bounces: 7 }]
+  game.bullets = [{ x: 190, y: 132, vx: 100, vy: 40, ttl: 4, owner: 'player' }]
   game.update(0.04)
   assert.equal(game.bullets.length, 1)
-  assert.ok(game.bullets[0]!.bounces > 7)
 })
 
 test('pause freezes enemy fire and projectiles; wave transitions remove old shots', () => {
@@ -906,7 +898,7 @@ test('shield absorbs exactly three hits from every demon type and from enemy sho
         if (attack === 'contact') {
           game.enemies = [{ ...enemyAt(game.player.x, game.player.y), kind }]
         } else {
-          game.bullets = [{ ...game.player, vx: 0, vy: 0, ttl: 1, owner: 'enemy', bounces: 0 }]
+          game.bullets = [{ ...game.player, vx: 0, vy: 0, ttl: 1, owner: 'enemy' }]
         }
         game.update(0.01)
         assert.equal(game.shield, Math.max(0, 3 - hit))

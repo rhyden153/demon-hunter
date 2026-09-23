@@ -36,7 +36,6 @@ type Bullet = Point & {
   vy: number
   ttl: number
   owner: 'player' | 'enemy'
-  bounces: number
 }
 type Particle = Point & { vx: number; vy: number; ttl: number; max: number; color: string }
 export type Snapshot = {
@@ -88,6 +87,8 @@ export class demonsGame {
   private nextId = 0
   private spawnBag: DemonKind[] = []
   private pausedStatus: 'playing' | 'cleared' | 'dying' = 'playing'
+  private minimapWalls: HTMLCanvasElement | null = null
+  private minimapGrid: number[][] | null = null
 
   constructor() {
     this.buildWave()
@@ -428,9 +429,8 @@ export class demonsGame {
         y: this.player.y,
         vx: vx * 440,
         vy: vy * 440,
-        ttl: 3.2, // 20% shorter range than before
+        ttl: 2.5,
         owner: 'player',
-        bounces: 0,
       })
       this.cooldown = 0.15
       this.onSound('shoot')
@@ -504,7 +504,6 @@ export class demonsGame {
             vy: Math.sin(angle) * speed,
             ttl: 2.55, // 15% shorter range than before
             owner: 'enemy',
-            bounces: 0,
           })
           enemy.fireCooldown = (2.3 + Math.random() * 0.9) / (this.difficulty === 'hard' ? 1.4 : 1)
           this.onSound('enemyShoot')
@@ -538,7 +537,6 @@ export class demonsGame {
           else bullet.x = nx
           if (hitY) bullet.vy *= -1
           else bullet.y = ny
-          bullet.bounces++
           this.burst(bullet.x, bullet.y, '#ceffe2', 4)
           if (this.distanceTo(this.player, bullet) < 420) this.onSound('bounce')
         } else {
@@ -784,5 +782,75 @@ export class demonsGame {
     vignette.addColorStop(1, '#05090c85')
     ctx.fillStyle = vignette
     ctx.fillRect(0, 0, WIDTH, HEIGHT)
+  }
+
+  // The minimap shows the whole world centered on the hunter, wrapping like the camera,
+  // so the shortest route to any portal or demon reads directly from the map.
+  drawMinimap(ctx: CanvasRenderingContext2D, width: number, height: number, time: number) {
+    if (this.minimapGrid !== this.grid) {
+      this.minimapGrid = this.grid
+      this.minimapWalls ||= document.createElement('canvas')
+      this.minimapWalls.width = COLS
+      this.minimapWalls.height = ROWS
+      const walls = this.minimapWalls.getContext('2d')!
+      walls.clearRect(0, 0, COLS, ROWS)
+      walls.fillStyle = '#4b6069'
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++) if (this.grid[y]![x]) walls.fillRect(x, y, 1, 1)
+    }
+    const scaleX = width / WORLD_WIDTH,
+      scaleY = height / WORLD_HEIGHT
+    const at = (point: Point) => ({
+      x: width / 2 + wrappedDelta(point.x - this.player.x, WORLD_WIDTH) * scaleX,
+      y: height / 2 + wrappedDelta(point.y - this.player.y, WORLD_HEIGHT) * scaleY,
+    })
+    ctx.clearRect(0, 0, width, height)
+    ctx.fillStyle = '#0c1215'
+    ctx.fillRect(0, 0, width, height)
+    ctx.imageSmoothingEnabled = false
+    const offsetX = wrap(width / 2 - this.player.x * scaleX, width),
+      offsetY = wrap(height / 2 - this.player.y * scaleY, height)
+    for (const x of [offsetX - width, offsetX])
+      for (const y of [offsetY - height, offsetY])
+        ctx.drawImage(this.minimapWalls!, x, y, width, height)
+    ctx.strokeStyle = '#adeac640'
+    ctx.lineWidth = 1
+    ctx.strokeRect(
+      Math.round((width - WIDTH * scaleX) / 2) + 0.5,
+      Math.round((height - HEIGHT * scaleY) / 2) + 0.5,
+      Math.round(WIDTH * scaleX) - 1,
+      Math.round(HEIGHT * scaleY) - 1,
+    )
+    const colors: Record<DemonKind, string> = {
+      ravager: '#ff6b52',
+      watcher: '#e27bff',
+      lurker: '#f2b44f',
+    }
+    for (const enemy of this.enemies) {
+      const { x, y } = at(enemy)
+      ctx.fillStyle = colors[enemy.kind]
+      ctx.fillRect(Math.round(x - 1.5), Math.round(y - 1.5), 3, 3)
+    }
+    for (const pickup of this.pickups) {
+      const { x, y } = at(pickup)
+      ctx.fillStyle = pickup.kind === 'shield' ? '#79dfff' : '#ff91b4'
+      ctx.fillRect(Math.round(x) - 2, Math.round(y) - 2, 4, 4)
+    }
+    const pulse = this.effects ? 0.5 + 0.5 * Math.sin(time * 5) : 1
+    for (const portal of this.portals) {
+      const { x, y } = at(portal)
+      ctx.fillStyle = '#ff8a3d'
+      ctx.beginPath()
+      ctx.arc(x, y, 3, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = `rgba(255, 173, 103, ${0.35 + pulse * 0.5})`
+      ctx.beginPath()
+      ctx.arc(x, y, 4.5 + pulse * 1.5, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+    ctx.fillStyle = '#adeac6'
+    ctx.beginPath()
+    ctx.arc(width / 2, height / 2, 2.5, 0, Math.PI * 2)
+    ctx.fill()
   }
 }

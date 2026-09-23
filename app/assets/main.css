@@ -294,8 +294,8 @@ main {
 .game-hud {
   display: flex;
   align-items: center;
-  min-height: 83px;
-  padding: 15px 24px;
+  min-height: 112px;
+  padding: 12px 24px;
   border-bottom: 1px solid #384149;
   gap: 0;
 }
@@ -315,6 +315,7 @@ main {
   font: 9px var(--mono);
   letter-spacing: 1.1px;
   color: #7f8c93;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -386,6 +387,21 @@ main {
   font-size: 19px;
   letter-spacing: 2px;
   color: #9eabb1;
+}
+.minimap {
+  flex-shrink: 0;
+  margin-right: 20px;
+  padding: 3px;
+  background: #0c1215;
+  border: 1px solid #2d3539;
+  border-radius: 5px;
+  line-height: 0;
+}
+.minimap canvas {
+  display: block;
+  height: 86px;
+  aspect-ratio: 111/69;
+  border-radius: 3px;
 }
 .pause-button {
   border: 1px solid #364045;
@@ -930,6 +946,7 @@ main {
 .wave-tracker strong {
   font: 500 19px var(--mono);
   color: #b3bfc2;
+  white-space: nowrap;
 }
 .wave-tracker strong > span {
   font-size: 7px;
@@ -1347,10 +1364,10 @@ kbd {
 }
 .game-panel:fullscreen .game-hud,
 .game-panel:fullscreen .arena-toolbar {
-  width: min(100%, calc((100vh - 125px) * 1.6087));
+  width: min(100%, calc((100vh - 155px) * 1.6087));
 }
 .game-panel:fullscreen .arena-screen {
-  width: min(100%, calc((100vh - 125px) * 1.6087));
+  width: min(100%, calc((100vh - 155px) * 1.6087));
   flex-shrink: 0;
 }
 .game-panel:fullscreen .game-overlay h2 {
@@ -1416,6 +1433,23 @@ kbd {
     font-size: 14px;
   }
 }
+@media (max-width: 1449px) {
+  .hud-stat {
+    padding: 0 22px;
+  }
+  .hud-stat:first-child {
+    padding-right: 28px;
+  }
+  .wave-tracker {
+    padding: 15px 16px;
+  }
+  .wave-tracker > div + div {
+    padding-left: 18px;
+  }
+  .best-stat {
+    padding-right: 16px;
+  }
+}
 @media (max-width: 1190px) {
   .app-shell {
     padding: 0 30px;
@@ -1438,8 +1472,14 @@ kbd {
     gap: 16px;
   }
   .game-hud {
-    padding: 15px 18px;
-    min-height: 76px;
+    padding: 11px 18px;
+    min-height: 98px;
+  }
+  .minimap {
+    margin-right: 14px;
+  }
+  .minimap canvas {
+    height: 74px;
   }
   .hud-stat {
     padding: 0 20px;
@@ -1562,8 +1602,14 @@ kbd {
     gap: 14px;
   }
   .game-hud {
-    padding: 14px;
-    min-height: 71px;
+    padding: 10px 14px;
+    min-height: 88px;
+  }
+  .minimap {
+    margin-right: 10px;
+  }
+  .minimap canvas {
+    height: 66px;
   }
   .hud-stat {
     padding: 0 16px;
@@ -1762,14 +1808,20 @@ kbd {
     gap: 18px;
   }
   .game-hud {
-    padding: 17px 22px;
-    min-height: 80px;
+    padding: 12px 22px;
+    min-height: 100px;
+  }
+  .minimap {
+    margin-right: 14px;
+  }
+  .minimap canvas {
+    height: 72px;
   }
   .hud-stat {
-    padding: 0 27px;
+    padding: 0 22px;
   }
   .hud-stat:first-child {
-    padding-right: 32px;
+    padding-right: 28px;
   }
   .hud-stat strong {
     font-size: 23px;
@@ -1989,8 +2041,15 @@ kbd {
     margin-bottom: 23px;
   }
   .game-hud {
-    padding: 13px 12px;
-    min-height: 65px;
+    padding: 10px 12px;
+    min-height: 76px;
+  }
+  .minimap {
+    margin: 0 0 0 auto;
+    padding: 2px;
+  }
+  .minimap canvas {
+    height: 54px;
   }
   .hud-stat {
     padding: 0 14px;

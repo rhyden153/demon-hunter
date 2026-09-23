@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { demonsGame, type Snapshot } from './utils/game'
-import { WIDTH, HEIGHT, WORLD_WIDTH, WORLD_HEIGHT } from './utils/maze'
+import { WIDTH, HEIGHT, WORLD_WIDTH, WORLD_HEIGHT, COLS, ROWS } from './utils/maze'
 import './assets/main.css'
 
 useHead({
@@ -23,6 +23,10 @@ type Run = {
   difficulty: string
 }
 const canvas = ref<HTMLCanvasElement | null>(null)
+const minimap = ref<HTMLCanvasElement | null>(null)
+// Two pixels per maze tile keeps single-tile walls legible on the minimap.
+const MINIMAP_WIDTH = COLS * 2,
+  MINIMAP_HEIGHT = ROWS * 2
 const arena = ref<HTMLElement | null>(null)
 const music = ref<HTMLAudioElement | null>(null)
 const view = ref('play')
@@ -311,12 +315,20 @@ function resize() {
   canvas.value.width = WIDTH * ratio
   canvas.value.height = HEIGHT * ratio
   canvas.value.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0)
+  if (minimap.value) {
+    minimap.value.width = MINIMAP_WIDTH * ratio
+    minimap.value.height = MINIMAP_HEIGHT * ratio
+    minimap.value.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0)
+  }
 }
 function animate(time: number) {
   game.update(previous ? (time - previous) / 1000 : 0)
   previous = time
   const context = canvas.value?.getContext('2d')
   if (context && view.value === 'play') game.draw(context, time / 1000)
+  const mapContext = minimap.value?.getContext('2d')
+  if (mapContext && view.value === 'play')
+    game.drawMinimap(mapContext, MINIMAP_WIDTH, MINIMAP_HEIGHT, time / 1000)
   if (time - lastSync > 75) {
     sync()
     lastSync = time
@@ -455,7 +467,7 @@ onBeforeUnmount(() => {
             <div class="hud-stat">
               <span class="stat-label">WAVE</span
               ><strong
-                ><span class="muted-hash">/</span>
+                >
                 {{ state.wave.toString().padStart(2, '0') }}</strong
               >
             </div>
@@ -483,7 +495,7 @@ onBeforeUnmount(() => {
               <div>
                 <span class="stat-label">DEMONS</span
                 ><strong
-                  >{{ state.enemies.toString().padStart(2, '0') }}<span> / ACTIVE</span></strong
+                  >{{ state.enemies.toString().padStart(2, '0') }}</strong
                 >
               </div>
               <div>
@@ -496,6 +508,15 @@ onBeforeUnmount(() => {
             <div class="hud-stat best-stat">
               <span class="stat-label"><GameIcon name="trophy" :size="11" /> PERSONAL BEST</span
               ><strong>{{ best.toString().padStart(6, '0') }}</strong>
+            </div>
+            <div class="minimap">
+              <canvas
+                ref="minimap"
+                :width="MINIMAP_WIDTH"
+                :height="MINIMAP_HEIGHT"
+                role="img"
+                :aria-label="`Minimap: ${state.portals} portals and ${state.enemies} demons remaining`"
+              ></canvas>
             </div>
             <button
               class="icon-button pause-button"
@@ -748,8 +769,8 @@ onBeforeUnmount(() => {
             <h3>Don’t get cornered.</h3>
             <p>
               Move with <b>arrow keys</b> through a maze nine times the screen area. The camera
-              follows you, and every edge <b>wraps to the opposite side</b>. There's no map — learn
-              the maze as you go. Each wave randomly picks one of <b>six maze layouts</b>, all the
+              follows you, and every edge <b>wraps to the opposite side</b>. The <b>minimap</b> in the HUD
+              keeps you at its center and marks every portal, demon, and pickup. Each wave randomly picks one of <b>six maze layouts</b>, all the
               same size. Hold <b>Shift</b> while moving to dash; it recharges in three seconds.
             </p>
           </article>
