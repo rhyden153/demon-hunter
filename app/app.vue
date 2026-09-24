@@ -29,6 +29,7 @@ const MINIMAP_WIDTH = COLS * 2,
   MINIMAP_HEIGHT = ROWS * 2
 const arena = ref<HTMLElement | null>(null)
 const music = ref<HTMLAudioElement | null>(null)
+const deathSound = ref<HTMLAudioElement | null>(null)
 const view = ref('play')
 const settingsOpen = ref(false)
 const initialized = ref(false)
@@ -101,6 +102,12 @@ function syncMusic() {
   if (!music.value) return
   if (sound.value && state.value.status === 'playing') music.value.play().catch(() => {})
   else music.value.pause()
+  const clip = deathSound.value
+  if (!clip) return
+  // The death clip follows the dying animation: it pauses with the game and resumes where it left off.
+  if (!sound.value || state.value.status === 'paused') clip.pause()
+  else if (state.value.status === 'dying' && clip.paused && clip.currentTime > 0 && !clip.ended)
+    clip.play().catch(() => {})
 }
 function initAudio() {
   if (!sound.value) return
@@ -112,6 +119,12 @@ function initAudio() {
   }
 }
 function playSound(type: string) {
+  if (type === 'death' && deathSound.value) {
+    if (!sound.value) return
+    deathSound.value.currentTime = 0
+    deathSound.value.play().catch(() => {})
+    return
+  }
   if (!sound.value || !audioContext || audioContext.state !== 'running') return
   const oscillator = audioContext.createOscillator(),
     gain = audioContext.createGain(),
@@ -152,6 +165,10 @@ function start() {
   game.start()
   recorded = false
   if (music.value) music.value.currentTime = 0
+  if (deathSound.value) {
+    deathSound.value.pause()
+    deathSound.value.currentTime = 0
+  }
   sync()
   nextTick(() => canvas.value?.focus())
 }
@@ -380,6 +397,7 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(frame)
   observer?.disconnect()
   music.value?.pause()
+  deathSound.value?.pause()
   void audioContext?.close()
   window.removeEventListener('keydown', keyDown)
   window.removeEventListener('keyup', keyUp)
@@ -529,6 +547,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="arena-screen" :class="{ 'is-ready': state.status === 'ready' }">
             <audio ref="music" src="/audio/sector-death.mp3" loop preload="auto"></audio>
+            <audio ref="deathSound" src="/audio/death.mp3" preload="auto"></audio>
             <canvas
               ref="canvas"
               :width="WIDTH"
