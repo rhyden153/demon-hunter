@@ -736,7 +736,7 @@ onBeforeUnmount(() => {
               <CharacterPortrait kind="lurker" />
               <div>
                 <strong>Lurker</strong
-                ><span>Almost blind. Will attack you if you get too close.</span>
+                ><span>Will attack you if you get too close.</span>
               </div>
               <span class="entity-points">50 PT</span>
             </div>
@@ -908,6 +908,31 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </section>
+
+      <section class="collection-section" aria-label="Neo Games collection">
+        <a
+          class="collection-card"
+          href="https://neogames.io"
+          aria-labelledby="collection-title collection-cta"
+        >
+          <img
+            src="/neo-games-social.png"
+            alt="Neo Games arcade collection"
+            width="1732"
+            height="908"
+            loading="lazy"
+          />
+          <div class="collection-copy">
+            <span class="eyebrow">THE ARCADE CONTINUES</span>
+            <h2 id="collection-title">More classics. More high scores.</h2>
+            <p>Find your next favorite in the Neo Games collection.</p>
+            <span id="collection-cta" class="collection-cta">
+              Explore more games <GameIcon name="arrow" :size="18" />
+            </span>
+          </div>
+        </a>
+      </section>
+
       <footer class="site-footer">
         <div><span class="footer-mark">S/</span> AN ARCADE CLASSIC. REBUILT FOR RIGHT NOW.</div>
         <span
