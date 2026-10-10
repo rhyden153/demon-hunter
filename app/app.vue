@@ -44,6 +44,8 @@ const state = ref<Snapshot>({
   wave: 1,
   lives: 3,
   shield: 0,
+  superGun: 0,
+  invincible: 0,
   enemies: 0,
   portals: 4,
   kills: 0,
@@ -484,10 +486,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="hud-stat">
               <span class="stat-label">WAVE</span
-              ><strong
-                >
-                {{ state.wave.toString().padStart(2, '0') }}</strong
-              >
+              ><strong> {{ state.wave.toString().padStart(2, '0') }}</strong>
             </div>
             <div class="hud-stat lives-stat">
               <span class="stat-label">LIVES</span>
@@ -508,13 +507,25 @@ onBeforeUnmount(() => {
               >
                 <GameIcon name="shield" :size="12" /> {{ state.shield }} / 3
               </span>
+              <span
+                v-if="state.superGun > 0"
+                class="super-gun-timer"
+                :aria-label="`Super gun: ${Math.ceil(state.superGun)} seconds remaining`"
+              >
+                <GameIcon name="bolt" :size="12" /> SUPER {{ Math.ceil(state.superGun) }}s
+              </span>
+              <span
+                v-if="state.invincible > 0"
+                class="invincible-timer"
+                :aria-label="`Invincible: ${Math.ceil(state.invincible)} seconds remaining`"
+              >
+                <GameIcon name="star" :size="12" /> INVINCIBLE {{ Math.ceil(state.invincible) }}s
+              </span>
             </div>
             <div class="wave-tracker">
               <div>
                 <span class="stat-label">DEMONS</span
-                ><strong
-                  >{{ state.enemies.toString().padStart(2, '0') }}</strong
-                >
+                ><strong>{{ state.enemies.toString().padStart(2, '0') }}</strong>
               </div>
               <div>
                 <span class="stat-label">PORTALS</span
@@ -734,10 +745,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="entity-row">
               <CharacterPortrait kind="lurker" />
-              <div>
-                <strong>Lurker</strong
-                ><span>Will attack you if you get too close.</span>
-              </div>
+              <div><strong>Lurker</strong><span>Will attack you if you get too close.</span></div>
               <span class="entity-points">50 PT</span>
             </div>
             <div class="entity-row">
@@ -788,9 +796,10 @@ onBeforeUnmount(() => {
             <h3>Don’t get cornered.</h3>
             <p>
               Move with <b>arrow keys</b> through a maze nine times the screen area. The camera
-              follows you, and every edge <b>wraps to the opposite side</b>. The <b>minimap</b> in the HUD
-              keeps you at its center and marks every portal, demon, and pickup. Each wave randomly picks one of <b>six maze layouts</b>, all the
-              same size. Hold <b>Shift</b> while moving to dash; it recharges in three seconds.
+              follows you, and every edge <b>wraps to the opposite side</b>. The <b>minimap</b> in
+              the HUD keeps you at its center and marks every portal, demon, and pickup. Each wave
+              randomly picks one of <b>six maze layouts</b>, all the same size. Hold
+              <b>Shift</b> while moving to dash; it recharges in three seconds.
             </p>
           </article>
           <article>
@@ -831,11 +840,15 @@ onBeforeUnmount(() => {
               tougher.
             </p>
             <p>
-              From <b>wave 4</b>, find a blue shield in the maze to absorb <b>three demon hits</b>,
+              From <b>wave 4</b>, find a pink heart in the maze for an <b>extra life</b>, even above
+              three. From <b>wave 6</b>, find a blue shield to absorb <b>three demon hits</b>,
               including shots and contact. Unused protection carries into the next wave; another
-              shield refills it to three hits. From <b>wave 5</b>, find a pink heart for an
-              <b>extra life</b>, even above three. One of each unlocked pickup appears at a random
-              location each wave. Walk over it to collect it.
+              shield refills it to three hits. After <b>wave 7</b>, two gold super guns appear in
+              each maze. For <b>30 seconds</b>, your shots deal <b>four times the damage</b>, enough
+              to drop any demon in a single hit; grabbing another resets the timer. After
+              <b>wave 9</b>, a violet star makes you <b>invincible for 15 seconds</b>: no hit can
+              hurt you, and your shield charges are saved for later. Unlocked pickups appear at
+              random locations each wave. Walk over one to collect it.
             </p>
           </article>
         </div>

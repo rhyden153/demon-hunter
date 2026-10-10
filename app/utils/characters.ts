@@ -4,16 +4,45 @@ export type DemonKind = 'ravager' | 'watcher' | 'lurker'
 
 export function drawPickup(
   ctx: CanvasRenderingContext2D,
-  kind: 'shield' | 'life',
+  kind: 'shield' | 'life' | 'supergun' | 'invincible',
   time = 0,
   effects = true,
 ) {
   ctx.save()
   shadow(ctx)
   if (effects) ctx.translate(0, Math.sin(time * 3) * 1.5)
-  ctx.shadowColor = kind === 'shield' ? '#79dfff' : '#ff91b4'
+  ctx.shadowColor = {
+    shield: '#79dfff',
+    life: '#ff91b4',
+    supergun: '#ffc94d',
+    invincible: '#b49bff',
+  }[kind]
   ctx.shadowBlur = effects ? 9 : 0
-  if (kind === 'shield') {
+  if (kind === 'invincible') {
+    // Five-point star.
+    shape(
+      ctx,
+      'M0-11 3-4 11-4 5 1 7 9 0 5-7 9-5 1-11-4-3-4Z',
+      gradient(ctx, '#e6dcff', '#6d4fd1'),
+      '#f3eeff',
+    )
+    shape(
+      ctx,
+      'M0-5 1.5-1.5 5-1.5 2.5 1 3.5 4.5 0 2.5-3.5 4.5-2.5 1-5-1.5-1.5-1.5Z',
+      '#fbf8ff',
+      '#fbf8ff',
+    )
+  } else if (kind === 'supergun') {
+    // Heavy blaster: wide barrel, grip, and a glowing muzzle.
+    shape(
+      ctx,
+      'M-10-5H7L10-3V1L7 3H0L-2 9H-7L-5 3H-10Z',
+      gradient(ctx, '#ffe9a3', '#c78a1c'),
+      '#fff4cf',
+    )
+    shape(ctx, 'M-8-3H5V0H-8Z', '#5a3d0c', '#ffc94d')
+    shape(ctx, 'M8-2H11V0H8Z', '#fff1b8', '#fff1b8')
+  } else if (kind === 'shield') {
     shape(
       ctx,
       'M0-10 9-6 8 3Q6 8 0 11Q-6 8-8 3L-9-6Z',

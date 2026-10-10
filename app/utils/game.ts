@@ -30,12 +30,16 @@ type Enemy = Point & {
   wanderTarget: Point | null
 }
 type Portal = Point & { hp: number; timer: number }
-type Pickup = Point & { kind: 'shield' | 'life' }
+type Pickup = Point & { kind: 'shield' | 'life' | 'supergun' | 'invincible' }
+export const SUPER_GUN_DURATION = 30
+export const INVINCIBLE_DURATION = 15
+export const SUPER_SHOT_DAMAGE = 4
 type Bullet = Point & {
   vx: number
   vy: number
   ttl: number
   owner: 'player' | 'enemy'
+  damage: number
 }
 type Particle = Point & { vx: number; vy: number; ttl: number; max: number; color: string }
 export type Snapshot = {
@@ -44,6 +48,8 @@ export type Snapshot = {
   wave: number
   lives: number
   shield: number
+  superGun: number
+  invincible: number
   enemies: number
   portals: number
   kills: number
@@ -53,6 +59,13 @@ export type Snapshot = {
   y: number
 }
 
+const PICKUP_COLORS: Record<Pickup['kind'], string> = {
+  shield: '#79dfff',
+  life: '#ff91b4',
+  supergun: '#ffc94d',
+  invincible: '#b49bff',
+}
+
 export class demonsGame {
   status: GameStatus = 'ready'
   score = 0
@@ -60,6 +73,8 @@ export class demonsGame {
   mazeIndex = 0
   lives = 3
   shield = 0
+  superGun = 0
+  invincible = 0
   kills = 0
   elapsed = 0
   dashCooldown = 0
@@ -101,6 +116,8 @@ export class demonsGame {
       wave: this.wave,
       lives: this.lives,
       shield: this.shield,
+      superGun: this.superGun,
+      invincible: this.invincible,
       enemies: this.enemies.length,
       portals: this.portals.length,
       kills: this.kills,
@@ -116,6 +133,8 @@ export class demonsGame {
     this.wave = 1
     this.lives = 3
     this.shield = 0
+    this.superGun = 0
+    this.invincible = 0
     this.kills = 0
     this.elapsed = 0
     this.dashCooldown = 0
@@ -153,8 +172,13 @@ export class demonsGame {
     this.pathTimer = 0
     this.updatePaths()
     this.pickups = []
-    if (this.wave > 3) this.spawnPickup('shield')
-    if (this.wave > 4) this.spawnPickup('life')
+    if (this.wave > 3) this.spawnPickup('life')
+    if (this.wave > 5) this.spawnPickup('shield')
+    if (this.wave > 7) {
+      this.spawnPickup('supergun')
+      this.spawnPickup('supergun')
+    }
+    if (this.wave > 9) this.spawnPickup('invincible')
   }
 
   private spawnPickup(kind: Pickup['kind']) {
@@ -182,8 +206,10 @@ export class demonsGame {
       if (this.distanceTo(this.player, pickup) >= 15 || !this.lineOfSight(this.player, pickup))
         return true
       if (pickup.kind === 'shield') this.shield = 3
+      else if (pickup.kind === 'supergun') this.superGun = SUPER_GUN_DURATION
+      else if (pickup.kind === 'invincible') this.invincible = INVINCIBLE_DURATION
       else this.lives++
-      this.burst(pickup.x, pickup.y, pickup.kind === 'shield' ? '#79dfff' : '#ff91b4', 18)
+      this.burst(pickup.x, pickup.y, PICKUP_COLORS[pickup.kind], 18)
       this.onSound('wave')
       return false
     })
@@ -389,6 +415,8 @@ export class demonsGame {
     this.waveElapsed += dt
     this.cooldown -= dt
     this.dashCooldown = Math.max(0, this.dashCooldown - dt)
+    this.superGun = Math.max(0, this.superGun - dt)
+    this.invincible = Math.max(0, this.invincible - dt)
     this.player.invulnerable = Math.max(0, this.player.invulnerable - dt)
     let mx = Number(this.keys.has('arrowright')) - Number(this.keys.has('arrowleft'))
     let my = Number(this.keys.has('arrowdown')) - Number(this.keys.has('arrowup'))
@@ -431,6 +459,7 @@ export class demonsGame {
         vy: vy * 440,
         ttl: 2.5,
         owner: 'player',
+        damage: this.superGun > 0 ? SUPER_SHOT_DAMAGE : 1,
       })
       this.cooldown = 0.15
       this.onSound('shoot')
@@ -504,6 +533,7 @@ export class demonsGame {
             vy: Math.sin(angle) * speed,
             ttl: 2.55, // 15% shorter range than before
             owner: 'enemy',
+            damage: 1,
           })
           enemy.fireCooldown = (2.3 + Math.random() * 0.9) / (this.difficulty === 'hard' ? 1.4 : 1)
           this.onSound('enemyShoot')
@@ -553,7 +583,7 @@ export class demonsGame {
         }
         const portal = this.portals.find((n) => n.hp > 0 && this.distanceTo(n, bullet) < 17)
         if (portal) {
-          portal.hp--
+          portal.hp -= bullet.damage
           bullet.ttl = 0
           this.burst(bullet.x, bullet.y, '#ffad67', 5)
           if (portal.hp <= 0) {
@@ -565,7 +595,7 @@ export class demonsGame {
         }
         const enemy = this.enemies.find((e) => e.hp > 0 && this.distanceTo(e, bullet) < 10)
         if (enemy) {
-          enemy.hp--
+          enemy.hp -= bullet.damage
           bullet.ttl = 0
           this.burst(enemy.x, enemy.y, '#ff835c')
           this.onSound('hit')
@@ -596,7 +626,8 @@ export class demonsGame {
   }
 
   private damagePlayer() {
-    if (this.player.invulnerable > 0 || this.status !== 'playing') return
+    // Invincibility blocks every hit without spending shield charges.
+    if (this.invincible > 0 || this.player.invulnerable > 0 || this.status !== 'playing') return
     this.player.invulnerable = 2.2
     if (this.shield > 0) {
       this.shield--
@@ -711,6 +742,19 @@ export class demonsGame {
     }
     ctx.save()
     ctx.translate(WIDTH / 2, HEIGHT / 2)
+    if (this.invincible > 0) {
+      // Pulsing aura; it flickers during the last three seconds as a warning.
+      const fading = this.invincible < 3 && Math.floor(time * 8) % 2
+      ctx.save()
+      ctx.globalAlpha = fading ? 0.25 : 0.55 + (this.effects ? 0.2 * Math.sin(time * 10) : 0)
+      ctx.fillStyle = '#b49bff'
+      ctx.shadowColor = '#b49bff'
+      ctx.shadowBlur = this.effects ? 14 : 0
+      ctx.beginPath()
+      ctx.arc(0, 0, 16, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    }
     if (this.shield > 0) {
       ctx.strokeStyle = '#79dfff'
       ctx.lineWidth = 1.5
@@ -756,6 +800,10 @@ export class demonsGame {
       const b = { ...bullet, ...this.worldToScreen(bullet) }
       ctx.strokeStyle = bullet.owner === 'enemy' ? '#ff946b' : '#ceffe2'
       ctx.shadowColor = bullet.owner === 'enemy' ? '#ff785a' : '#91efbd'
+      if (bullet.damage > 1) {
+        ctx.strokeStyle = '#fff1b8'
+        ctx.shadowColor = '#ffc94d'
+      }
       ctx.lineWidth = bullet.owner === 'enemy' ? 3 : 2
       ctx.beginPath()
       ctx.moveTo(b.x, b.y)
@@ -833,7 +881,7 @@ export class demonsGame {
     }
     for (const pickup of this.pickups) {
       const { x, y } = at(pickup)
-      ctx.fillStyle = pickup.kind === 'shield' ? '#79dfff' : '#ff91b4'
+      ctx.fillStyle = PICKUP_COLORS[pickup.kind]
       ctx.fillRect(Math.round(x) - 2, Math.round(y) - 2, 4, 4)
     }
     const pulse = this.effects ? 0.5 + 0.5 * Math.sin(time * 5) : 1

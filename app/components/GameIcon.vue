@@ -16,6 +16,7 @@ const paths: Record<string, string> = {
   close: 'm6 6 12 12M6 18 18 6',
   bolt: 'm13 2-9 12h7l-1 8 10-13h-7l0-7Z',
   shield: 'm12 2 8 4v6c0 5-8 10-8 10S4 17 4 12V6l8-4Z',
+  star: 'm12 2 3 7h7l-5.5 4.5L18.5 21 12 16.5 5.5 21l2-7.5L2 9h7l3-7Z',
   heart: 'M20 5c-3-3-7-1-8 1-1-2-5-4-8-1-5 5 3 11 8 15 5-4 13-10 8-15Z',
   reset: 'M3 10a9 9 0 1 1 2 8M3 3v7h7',
   chevron: 'm9 5 7 7-7 7',

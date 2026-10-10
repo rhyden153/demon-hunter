@@ -1,6 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { demonsGame, DEATH_DURATION } from '../app/utils/game.ts'
+import {
+  demonsGame,
+  DEATH_DURATION,
+  SUPER_GUN_DURATION,
+  SUPER_SHOT_DAMAGE,
+  INVINCIBLE_DURATION,
+} from '../app/utils/game.ts'
 import {
   COLS,
   ROWS,
@@ -26,7 +32,7 @@ test('the last hit plays death once, freezes combat, then ends the run', () => {
     game.score = 150
     game.enemies = [enemyAt(game.player.x + (attack === 'contact' ? 0 : 80), game.player.y)]
     if (attack === 'shot')
-      game.bullets = [{ ...game.player, vx: 0, vy: 0, ttl: 1, owner: 'enemy' }]
+      game.bullets = [{ ...game.player, vx: 0, vy: 0, ttl: 1, owner: 'enemy', damage: 1 }]
     const sounds: string[] = []
     game.onSound = (sound) => sounds.push(sound)
     game.update(0.01)
@@ -548,9 +554,7 @@ test('camera and mouse aim remain continuous across the world seams', () => {
 test('both kinds of projectiles wrap horizontally and vertically', () => {
   for (const owner of ['player', 'enemy'] as const) {
     const game = openWorld()
-    game.bullets = [
-      { x: WORLD_WIDTH - 1, y: WORLD_HEIGHT - 1, vx: 200, vy: 200, ttl: 4, owner },
-    ]
+    game.bullets = [{ x: WORLD_WIDTH - 1, y: WORLD_HEIGHT - 1, vx: 200, vy: 200, ttl: 4, owner }]
     game.update(0.04)
     assert.ok(Math.abs(game.bullets[0]!.x - 7) < 0.001)
     assert.ok(Math.abs(game.bullets[0]!.y - 7) < 0.001)
@@ -568,6 +572,7 @@ test('ricochets reflect the struck wall face and preserve the tangent velocity',
       vy: axis === 'x' ? 40 : 100,
       ttl: 4,
       owner: 'player' as const,
+      damage: 1,
     }
     game.bullets = [bullet]
     tick(game, 0.15)
@@ -591,6 +596,7 @@ test('shots reflect at convex and concave corners without tunneling or sticking'
       vy: 100,
       ttl: 4,
       owner: 'player' as const,
+      damage: 1,
     }
     game.bullets = [bullet]
     game.update(0.04)
@@ -605,7 +611,7 @@ test('a diagonal bank shot kills an enemy behind a corner obstruction', () => {
   game.grid[7]![7] = 1 // Direct fire from (120,180) to (240,180) is blocked.
   for (let x = 4; x <= 12; x++) game.grid[4]![x] = 1 // Bank off the ceiling.
   game.enemies = [enemyAt(240, 180)]
-  const bullet = { x: 120, y: 180, vx: 140, vy: -140, ttl: 4, owner: 'player' as const }
+  const bullet = { x: 120, y: 180, vx: 140, vy: -140, ttl: 4, owner: 'player' as const, damage: 1 }
   game.bullets = [bullet]
   tick(game, 0.95)
   assert.equal(game.kills, 1)
@@ -699,11 +705,11 @@ test('enemy projectiles are absorbed during invulnerability and own ricochets ar
 
 test('projectile lifetimes expire shots; player shots have no bounce limit', () => {
   const game = openWorld()
-  game.bullets = [{ x: 120, y: 120, vx: 100, vy: 0, ttl: 0.02, owner: 'player' }]
+  game.bullets = [{ x: 120, y: 120, vx: 100, vy: 0, ttl: 0.02, owner: 'player', damage: 1 }]
   game.update(0.04)
   assert.equal(game.bullets.length, 0)
   game.grid[5]![8] = 1
-  game.bullets = [{ x: 190, y: 132, vx: 100, vy: 40, ttl: 4, owner: 'player' }]
+  game.bullets = [{ x: 190, y: 132, vx: 100, vy: 40, ttl: 4, owner: 'player', damage: 1 }]
   game.update(0.04)
   assert.equal(game.bullets.length, 1)
 })
@@ -857,14 +863,19 @@ test('accelerating spawns remain capped and destroyed portals stop producing dem
   assert.equal(game.enemies.length, count)
 })
 
-test('one shield spawns after wave three and one extra life after wave four, away from portals', () => {
+test('pickups unlock by wave (life > 3, shield > 5, two super guns > 7, invincibility > 9) away from portals', () => {
   const game = new demonsGame()
-  for (let wave = 1; wave <= 10; wave++) {
+  for (let wave = 1; wave <= 11; wave++) {
     game.wave = wave
     game.buildWave()
     assert.deepEqual(
       game.pickups.map((pickup) => pickup.kind),
-      wave > 4 ? ['shield', 'life'] : wave > 3 ? ['shield'] : [],
+      [
+        ...(wave > 3 ? ['life'] : []),
+        ...(wave > 5 ? ['shield'] : []),
+        ...(wave > 7 ? ['supergun', 'supergun'] : []),
+        ...(wave > 9 ? ['invincible'] : []),
+      ],
     )
     for (const pickup of game.pickups) {
       for (const other of [
@@ -898,7 +909,7 @@ test('shield absorbs exactly three hits from every demon type and from enemy sho
         if (attack === 'contact') {
           game.enemies = [{ ...enemyAt(game.player.x, game.player.y), kind }]
         } else {
-          game.bullets = [{ ...game.player, vx: 0, vy: 0, ttl: 1, owner: 'enemy' }]
+          game.bullets = [{ ...game.player, vx: 0, vy: 0, ttl: 1, owner: 'enemy', damage: 1 }]
         }
         game.update(0.01)
         assert.equal(game.shield, Math.max(0, 3 - hit))
@@ -952,6 +963,113 @@ test('extra-life pickups add exactly one life, including above three, and surviv
     game.start()
     assert.equal(game.lives, 3)
   }
+})
+
+test('super gun shots are thicker one-hit kills for one minute, then the gun reverts', () => {
+  for (const wave of [2, 8]) {
+    const game = openWorld()
+    game.wave = wave
+    const hp = wave > 3 ? 2 : 1
+    game.pickups = [{ ...game.player, kind: 'supergun' }]
+    game.update(0.01)
+    assert.equal(game.pickups.length, 0)
+    assert.equal(game.superGun, SUPER_GUN_DURATION)
+    assert.equal(game.snapshot().superGun, game.superGun)
+    game.enemies = [{ ...enemyAt(game.player.x + 60, game.player.y), hp }]
+    game.keys.add(' ')
+    tick(game, 0.3)
+    game.keys.delete(' ')
+    assert.equal(game.enemies.length, 0, 'One super shot must kill a full-health demon')
+    assert.equal(game.kills, 1)
+    tick(game, SUPER_GUN_DURATION)
+    assert.equal(game.superGun, 0)
+    game.bullets = []
+    game.enemies = [{ ...enemyAt(game.player.x + 60, game.player.y), hp: 2 }]
+    game.keys.add(' ')
+    game.update(0.01)
+    game.keys.delete(' ')
+    assert.equal(game.bullets[0]!.damage, 1, 'Expired super gun must fire normal shots')
+  }
+})
+
+test('super shots deal four damage with the same reach as normal shots', () => {
+  const portalGame = openWorld()
+  portalGame.portals = [{ x: portalGame.player.x + 80, y: portalGame.player.y, hp: 7, timer: 1000 }]
+  portalGame.bullets = [
+    { ...portalGame.player, vx: 440, vy: 0, ttl: 0.3, owner: 'player', damage: SUPER_SHOT_DAMAGE },
+  ]
+  for (let i = 0; i < 30; i++) portalGame.update(0.01)
+  assert.equal(portalGame.portals[0]!.hp, 7 - SUPER_SHOT_DAMAGE)
+  // A demon's hit radius is 10, so a shot passing 11px away must miss.
+  const demonGame = openWorld()
+  demonGame.enemies = [{ ...enemyAt(demonGame.player.x + 80, demonGame.player.y + 11), hp: 2 }]
+  demonGame.bullets = [
+    { ...demonGame.player, vx: 440, vy: 0, ttl: 0.3, owner: 'player', damage: SUPER_SHOT_DAMAGE },
+  ]
+  for (let i = 0; i < 30; i++) demonGame.update(0.01)
+  assert.equal(demonGame.enemies[0]!.hp, 2, 'Super shots must not reach beyond a normal shot')
+})
+
+test('invincibility blocks contact and shots for 15 seconds without spending shield charges', () => {
+  for (const attack of ['contact', 'shot'] as const) {
+    const game = openWorld()
+    game.shield = 2
+    game.pickups = [{ ...game.player, kind: 'invincible' }]
+    game.update(0.01)
+    assert.equal(game.invincible, INVINCIBLE_DURATION)
+    assert.equal(game.snapshot().invincible, game.invincible)
+    for (let hit = 0; hit < 5; hit++) {
+      game.player.invulnerable = 0
+      if (attack === 'contact') game.enemies = [enemyAt(game.player.x, game.player.y)]
+      else game.bullets = [{ ...game.player, vx: 0, vy: 0, ttl: 1, owner: 'enemy', damage: 1 }]
+      game.update(0.01)
+    }
+    assert.equal(game.lives, 3)
+    assert.equal(game.shield, 2)
+    game.enemies = []
+    game.bullets = []
+    tick(game, INVINCIBLE_DURATION)
+    assert.equal(game.invincible, 0)
+    game.player.invulnerable = 0
+    game.enemies = [enemyAt(game.player.x, game.player.y)]
+    game.update(0.01)
+    assert.equal(game.shield, 1, 'Hits land normally once invincibility expires')
+  }
+})
+
+test('invincibility pauses with the game, carries across waves, and resets on restart', () => {
+  const game = openWorld()
+  game.pickups = [{ ...game.player, kind: 'invincible' }]
+  game.update(0.01)
+  game.togglePause()
+  game.update(0.04)
+  assert.equal(game.invincible, INVINCIBLE_DURATION)
+  game.togglePause()
+  game.portals = []
+  game.update(0.01)
+  assert.equal(game.status, 'cleared')
+  tick(game, 3)
+  assert.equal(game.wave, 2)
+  assert.ok(game.invincible > INVINCIBLE_DURATION - 1)
+  game.start()
+  assert.equal(game.invincible, 0)
+})
+
+test('a second super gun resets the timer, and the timer pauses and resets on restart', () => {
+  const game = openWorld()
+  game.pickups = [{ ...game.player, kind: 'supergun' }]
+  game.update(0.01)
+  tick(game, 20)
+  assert.ok(game.superGun < SUPER_GUN_DURATION - 19)
+  game.pickups = [{ ...game.player, kind: 'supergun' }]
+  game.update(0.01)
+  assert.equal(game.superGun, SUPER_GUN_DURATION, 'A second gun refills without stacking')
+  game.togglePause()
+  game.update(0.04)
+  assert.equal(game.superGun, SUPER_GUN_DURATION)
+  game.togglePause()
+  game.start()
+  assert.equal(game.superGun, 0)
 })
 
 test('pickups respect pause, walls, world wrapping, and collection along a dash', () => {

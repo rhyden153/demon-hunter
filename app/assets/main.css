@@ -761,6 +761,20 @@ main {
   color: #79dfff;
   font: 10px var(--mono);
 }
+.super-gun-timer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #ffc94d;
+  font: 10px var(--mono);
+}
+.invincible-timer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #b49bff;
+  font: 10px var(--mono);
+}
 .entity-row {
   display: flex;
   align-items: center;
