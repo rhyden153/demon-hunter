@@ -76,7 +76,48 @@ const statusLabel = computed(
       cleared: 'SECTOR SECURED',
     })[state.value.status],
 )
+// Keys the game handles; the browser's default action (scrolling, etc.) is suppressed for these.
+const GAME_KEYS = new Set([
+  'w',
+  'a',
+  's',
+  'd',
+  'arrowup',
+  'arrowdown',
+  'arrowleft',
+  'arrowright',
+  ' ',
+  'shift',
+  'escape',
+  'p',
+  'enter',
+])
+const MOVE_PAD = [
+  ['arrowup', '↑'],
+  ['arrowleft', '←'],
+  ['arrowdown', '↓'],
+  ['arrowright', '→'],
+] as const
+const FIRE_PAD = [
+  ['w', '↑'],
+  ['a', '←'],
+  ['s', '↓'],
+  ['d', '→'],
+] as const
+const SOUND_FREQUENCY: Record<string, number> = {
+  shoot: 510,
+  hit: 150,
+  portal: 110,
+  hurt: 75,
+  death: 260,
+  wave: 540,
+  dash: 300,
+  enemyShoot: 230,
+  bounce: 920,
+}
 let game: demonsGame
+let context: CanvasRenderingContext2D | null = null
+let mapContext: CanvasRenderingContext2D | null = null
 let frame = 0,
   previous = 0,
   lastSync = 0
@@ -85,8 +126,19 @@ let audioContext: AudioContext | null = null
 let observer: ResizeObserver | null = null
 let returnFocus: HTMLElement | null = null
 function sync() {
-  if (game) state.value = game.snapshot()
+  if (game) {
+    const next = game.snapshot()
+    // Skip identical snapshots so an idle screen does not re-render the page.
+    if ((Object.keys(next) as (keyof Snapshot)[]).some((key) => next[key] !== state.value[key]))
+      state.value = next
+  }
   syncMusic()
+}
+function pauseIfRunning() {
+  if (game && ['playing', 'cleared', 'dying'].includes(game.status)) {
+    game.togglePause()
+    sync()
+  }
 }
 watch([sound, effects, difficulty], () => {
   try {
@@ -102,8 +154,9 @@ watch([sound, effects, difficulty], () => {
 })
 function syncMusic() {
   if (!music.value) return
-  if (sound.value && state.value.status === 'playing') music.value.play().catch(() => {})
-  else music.value.pause()
+  if (sound.value && state.value.status === 'playing') {
+    if (music.value.paused) music.value.play().catch(() => {})
+  } else if (!music.value.paused) music.value.pause()
   const clip = deathSound.value
   if (!clip) return
   // The death clip follows the dying animation: it pauses with the game and resumes where it left off.
@@ -131,20 +184,9 @@ function playSound(type: string) {
   const oscillator = audioContext.createOscillator(),
     gain = audioContext.createGain(),
     now = audioContext.currentTime
-  const frequency: Record<string, number> = {
-    shoot: 510,
-    hit: 150,
-    portal: 110,
-    hurt: 75,
-    death: 260,
-    wave: 540,
-    dash: 300,
-    enemyShoot: 230,
-    bounce: 920,
-  }
   const duration = type === 'death' ? 0.65 : 0.16
   oscillator.type = type === 'death' ? 'sawtooth' : type === 'shoot' ? 'triangle' : 'square'
-  oscillator.frequency.setValueAtTime(frequency[type] || 200, now)
+  oscillator.frequency.setValueAtTime(SOUND_FREQUENCY[type] || 200, now)
   oscillator.frequency.exponentialRampToValueAtTime(
     type === 'wave' ? 850 : 40,
     now + duration * 0.8,
@@ -180,17 +222,11 @@ function pause() {
   if (game?.status === 'playing') canvas.value?.focus()
 }
 function changeView(next: string) {
-  if (game && ['playing', 'cleared', 'dying'].includes(game.status)) {
-    game.togglePause()
-    sync()
-  }
+  pauseIfRunning()
   view.value = next
 }
 function openSettings() {
-  if (game && ['playing', 'cleared', 'dying'].includes(game.status)) {
-    game.togglePause()
-    sync()
-  }
+  pauseIfRunning()
   returnFocus = document.activeElement as HTMLElement
   settingsOpen.value = true
   nextTick(() =>
@@ -234,24 +270,7 @@ function keyDown(event: KeyboardEvent) {
     ['INPUT', 'SELECT', 'BUTTON'].includes((event.target as HTMLElement)?.tagName)
   )
     return
-  if (
-    [
-      'w',
-      'a',
-      's',
-      'd',
-      'arrowup',
-      'arrowdown',
-      'arrowleft',
-      'arrowright',
-      ' ',
-      'shift',
-      'escape',
-      'p',
-      'enter',
-    ].includes(key)
-  )
-    event.preventDefault()
+  if (GAME_KEYS.has(key)) event.preventDefault()
   if ((key === 'p' || key === 'escape') && !event.repeat) pause()
   else if (key === 'enter' && !event.repeat && ['ready', 'over'].includes(game.status)) start()
   else if (key === 'm' && !event.repeat) toggleSound()
@@ -260,14 +279,8 @@ function keyDown(event: KeyboardEvent) {
 function keyUp(event: KeyboardEvent) {
   game?.keys.delete(event.key.toLowerCase())
 }
-function loseFocus() {
-  if (game && ['playing', 'cleared', 'dying'].includes(game.status)) {
-    game.togglePause()
-    sync()
-  }
-}
 function visibilityChange() {
-  if (document.hidden) loseFocus()
+  if (document.hidden) pauseIfRunning()
 }
 function point(event: PointerEvent) {
   if (!canvas.value || !game) return
@@ -333,21 +346,22 @@ function resize() {
   const ratio = Math.min(window.devicePixelRatio || 1, 2)
   canvas.value.width = WIDTH * ratio
   canvas.value.height = HEIGHT * ratio
-  canvas.value.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0)
+  context = canvas.value.getContext('2d')
+  context?.setTransform(ratio, 0, 0, ratio, 0, 0)
   if (minimap.value) {
     minimap.value.width = MINIMAP_WIDTH * ratio
     minimap.value.height = MINIMAP_HEIGHT * ratio
-    minimap.value.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0)
+    mapContext = minimap.value.getContext('2d')
+    mapContext?.setTransform(ratio, 0, 0, ratio, 0, 0)
   }
 }
 function animate(time: number) {
   game.update(previous ? (time - previous) / 1000 : 0)
   previous = time
-  const context = canvas.value?.getContext('2d')
-  if (context && view.value === 'play') game.draw(context, time / 1000)
-  const mapContext = minimap.value?.getContext('2d')
-  if (mapContext && view.value === 'play')
-    game.drawMinimap(mapContext, MINIMAP_WIDTH, MINIMAP_HEIGHT, time / 1000)
+  if (view.value === 'play') {
+    if (context) game.draw(context, time / 1000)
+    if (mapContext) game.drawMinimap(mapContext, MINIMAP_WIDTH, MINIMAP_HEIGHT, time / 1000)
+  }
   if (time - lastSync > 75) {
     sync()
     lastSync = time
@@ -390,7 +404,7 @@ onMounted(() => {
   initialized.value = true
   window.addEventListener('keydown', keyDown)
   window.addEventListener('keyup', keyUp)
-  window.addEventListener('blur', loseFocus)
+  window.addEventListener('blur', pauseIfRunning)
   window.addEventListener('pointerup', stopFire)
   document.addEventListener('visibilitychange', visibilityChange)
   frame = requestAnimationFrame(animate)
@@ -403,7 +417,7 @@ onBeforeUnmount(() => {
   void audioContext?.close()
   window.removeEventListener('keydown', keyDown)
   window.removeEventListener('keyup', keyUp)
-  window.removeEventListener('blur', loseFocus)
+  window.removeEventListener('blur', pauseIfRunning)
   window.removeEventListener('pointerup', stopFire)
   document.removeEventListener('visibilitychange', visibilityChange)
 })
@@ -557,7 +571,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <div class="arena-screen" :class="{ 'is-ready': state.status === 'ready' }">
-            <audio ref="music" src="/audio/sector-death.mp3" loop preload="auto"></audio>
+            <audio ref="music" src="/audio/sector-death.mp3" loop preload="none"></audio>
             <audio ref="deathSound" src="/audio/death.mp3" preload="auto"></audio>
             <canvas
               ref="canvas"
@@ -638,17 +652,12 @@ onBeforeUnmount(() => {
             <div class="touch-pad">
               <span>MOVE</span
               ><button
-                v-for="[key, label] in [
-                  ['arrowup', '↑'],
-                  ['arrowleft', '←'],
-                  ['arrowdown', '↓'],
-                  ['arrowright', '→'],
-                ]"
+                v-for="[key, label] in MOVE_PAD"
                 :key="key"
                 :aria-label="`Move ${label}`"
-                @pointerdown="touchKey(key!, true, $event)"
-                @pointerup="touchKey(key!, false, $event)"
-                @pointercancel="touchKey(key!, false, $event)"
+                @pointerdown="touchKey(key, true, $event)"
+                @pointerup="touchKey(key, false, $event)"
+                @pointercancel="touchKey(key, false, $event)"
               >
                 {{ label }}
               </button>
@@ -675,17 +684,12 @@ onBeforeUnmount(() => {
             <div class="touch-pad">
               <span>FIRE</span
               ><button
-                v-for="[key, label] in [
-                  ['w', '↑'],
-                  ['a', '←'],
-                  ['s', '↓'],
-                  ['d', '→'],
-                ]"
+                v-for="[key, label] in FIRE_PAD"
                 :key="key"
                 :aria-label="`Fire ${label}`"
-                @pointerdown="touchKey(key!, true, $event)"
-                @pointerup="touchKey(key!, false, $event)"
-                @pointercancel="touchKey(key!, false, $event)"
+                @pointerdown="touchKey(key, true, $event)"
+                @pointerup="touchKey(key, false, $event)"
+                @pointercancel="touchKey(key, false, $event)"
               >
                 {{ label }}
               </button>

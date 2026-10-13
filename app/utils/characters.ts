@@ -1,22 +1,25 @@
 // Shared, resolution-independent character artwork for the arena and field guide.
 // Silhouettes fit a 24px corridor; accessories extend beyond the collision body.
 export type DemonKind = 'ravager' | 'watcher' | 'lurker'
+export type PickupKind = 'shield' | 'life' | 'supergun' | 'invincible'
+
+export const PICKUP_COLORS: Record<PickupKind, string> = {
+  shield: '#79dfff',
+  life: '#ff91b4',
+  supergun: '#ffc94d',
+  invincible: '#b49bff',
+}
 
 export function drawPickup(
   ctx: CanvasRenderingContext2D,
-  kind: 'shield' | 'life' | 'supergun' | 'invincible',
+  kind: PickupKind,
   time = 0,
   effects = true,
 ) {
   ctx.save()
   shadow(ctx)
   if (effects) ctx.translate(0, Math.sin(time * 3) * 1.5)
-  ctx.shadowColor = {
-    shield: '#79dfff',
-    life: '#ff91b4',
-    supergun: '#ffc94d',
-    invincible: '#b49bff',
-  }[kind]
+  ctx.shadowColor = PICKUP_COLORS[kind]
   ctx.shadowBlur = effects ? 9 : 0
   if (kind === 'invincible') {
     // Five-point star.
@@ -83,11 +86,25 @@ function shape(
   ctx.stroke(geometry)
 }
 
-function gradient(ctx: CanvasRenderingContext2D, top: string, bottom: string) {
-  const paint = ctx.createLinearGradient(-5, -10, 7, 12)
-  paint.addColorStop(0, top)
-  paint.addColorStop(1, bottom)
+// Gradients use fixed local coordinates and take the transform at paint time,
+// so one instance per color pair serves every sprite and frame.
+const gradients = new Map<string, CanvasGradient>()
+function cachedGradient(key: string, create: () => CanvasGradient) {
+  let paint = gradients.get(key)
+  if (!paint) {
+    paint = create()
+    gradients.set(key, paint)
+  }
   return paint
+}
+
+function gradient(ctx: CanvasRenderingContext2D, top: string, bottom: string) {
+  return cachedGradient(`${top}${bottom}`, () => {
+    const paint = ctx.createLinearGradient(-5, -10, 7, 12)
+    paint.addColorStop(0, top)
+    paint.addColorStop(1, bottom)
+    return paint
+  })
 }
 
 function shadow(ctx: CanvasRenderingContext2D) {
@@ -114,10 +131,13 @@ export function drawPortal(ctx: CanvasRenderingContext2D, time = 0, effects = tr
   ctx.save()
   ctx.shadowColor = '#ff582e'
   ctx.shadowBlur = effects ? 12 * pulse : 0
-  const fire = ctx.createLinearGradient(0, -12, 0, 12)
-  fire.addColorStop(0, '#96213c')
-  fire.addColorStop(0.55, '#f34b29')
-  fire.addColorStop(1, '#ffd781')
+  const fire = cachedGradient('portal-fire', () => {
+    const paint = ctx.createLinearGradient(0, -12, 0, 12)
+    paint.addColorStop(0, '#96213c')
+    paint.addColorStop(0.55, '#f34b29')
+    paint.addColorStop(1, '#ffd781')
+    return paint
+  })
   shape(ctx, 'M-9 11V-3Q-8-10 0-12Q8-10 9-3V11Z', fire, '#ffaf67')
   ctx.restore()
   shape(ctx, 'M-6 10-7-2Q-6-8 0-10Q6-8 7-2L6 10Z', '#260e23', '#9f2a38')

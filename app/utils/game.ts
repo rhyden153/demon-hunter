@@ -1,5 +1,12 @@
-import { drawDemon, drawHunter, drawHunterDeath, drawPortal, drawPickup } from './characters.ts'
-import type { DemonKind } from './characters.ts'
+import {
+  drawDemon,
+  drawHunter,
+  drawHunterDeath,
+  drawPortal,
+  drawPickup,
+  PICKUP_COLORS,
+} from './characters.ts'
+import type { DemonKind, PickupKind } from './characters.ts'
 import {
   COLS,
   ROWS,
@@ -30,7 +37,7 @@ type Enemy = Point & {
   wanderTarget: Point | null
 }
 type Portal = Point & { hp: number; timer: number }
-type Pickup = Point & { kind: 'shield' | 'life' | 'supergun' | 'invincible' }
+type Pickup = Point & { kind: PickupKind }
 export const SUPER_GUN_DURATION = 30
 export const INVINCIBLE_DURATION = 15
 export const SUPER_SHOT_DAMAGE = 4
@@ -59,11 +66,26 @@ export type Snapshot = {
   y: number
 }
 
-const PICKUP_COLORS: Record<Pickup['kind'], string> = {
-  shield: '#79dfff',
-  life: '#ff91b4',
-  supergun: '#ffc94d',
-  invincible: '#b49bff',
+const UNREACHED = 999
+// Chasing demons break ties in this order; path distances do not depend on it.
+const NEIGHBORS = [
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+  [0, -1],
+] as const
+const MOVE_KEYS = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright']
+const MINIMAP_DEMON_COLORS: Record<DemonKind, string> = {
+  ravager: '#ff6b52',
+  watcher: '#e27bff',
+  lurker: '#f2b44f',
+}
+
+// Removes rejected items in place, so per-frame cleanup allocates no new arrays.
+function retain<T>(items: T[], keep: (item: T) => boolean) {
+  let length = 0
+  for (const item of items) if (keep(item)) items[length++] = item
+  items.length = length
 }
 
 export class demonsGame {
@@ -96,7 +118,8 @@ export class demonsGame {
   ) => void = () => {}
   private cooldown = 0
   private pathTimer = 0
-  private distance: number[][] = []
+  private distance = Array.from({ length: ROWS }, () => Array<number>(COLS).fill(UNREACHED))
+  private pathQueue = new Int32Array(COLS * ROWS)
   private clearTimer = 0
   private waveElapsed = 0
   private nextId = 0
@@ -181,19 +204,15 @@ export class demonsGame {
     if (this.wave > 9) this.spawnPickup('invincible')
   }
 
-  private spawnPickup(kind: Pickup['kind']) {
+  private spawnPickup(kind: PickupKind) {
     const spots: Point[] = []
+    const occupied = [...this.portals, ...this.pickups]
     for (let y = 0; y < ROWS; y++) {
       for (let x = 0; x < COLS; x++) {
         const point = { x: (x + 0.5) * TILE, y: (y + 0.5) * TILE }
-        if (this.distance[y]![x] === 999 || !this.canMove(point.x, point.y)) continue
+        if (this.distance[y]![x] === UNREACHED || !this.canMove(point.x, point.y)) continue
         if (this.distanceTo(point, this.player) < 6 * TILE) continue
-        if (
-          [...this.portals, ...this.pickups].some(
-            (other) => this.distanceTo(point, other) < 2 * TILE,
-          )
-        )
-          continue
+        if (occupied.some((other) => this.distanceTo(point, other) < 2 * TILE)) continue
         spots.push(point)
       }
     }
@@ -202,7 +221,7 @@ export class demonsGame {
   }
 
   private collectPickups() {
-    this.pickups = this.pickups.filter((pickup) => {
+    retain(this.pickups, (pickup) => {
       if (this.distanceTo(this.player, pickup) >= 15 || !this.lineOfSight(this.player, pickup))
         return true
       if (pickup.kind === 'shield') this.shield = 3
@@ -324,6 +343,15 @@ export class demonsGame {
     }
   }
 
+  // Screen position, or null when the point lies farther than `margin` outside the view.
+  private onScreen(point: Point, margin: number): Point | null {
+    const screen = this.worldToScreen(point)
+    return Math.abs(screen.x - WIDTH / 2) > WIDTH / 2 + margin ||
+      Math.abs(screen.y - HEIGHT / 2) > HEIGHT / 2 + margin
+      ? null
+      : screen
+  }
+
   private distanceTo(a: Point, b: Point) {
     return Math.hypot(wrappedDelta(b.x - a.x, WORLD_WIDTH), wrappedDelta(b.y - a.y, WORLD_HEIGHT))
   }
@@ -351,25 +379,24 @@ export class demonsGame {
     if (this.canMove(body.x, body.y + dy, radius)) body.y = wrap(body.y + dy, WORLD_HEIGHT)
   }
 
+  // Breadth-first distances from the hunter; the grid and queue are reused between refreshes.
   private updatePaths() {
-    this.distance = Array.from({ length: ROWS }, () => Array(COLS).fill(999))
+    for (const row of this.distance) row.fill(UNREACHED)
     const sx = Math.floor(this.player.x / TILE),
       sy = Math.floor(this.player.y / TILE)
     this.distance[sy]![sx] = 0
-    const queue = [[sx, sy]]
-    for (let i = 0; i < queue.length; i++) {
-      const [x = 0, y = 0] = queue[i]!
-      for (const [dx = 0, dy = 0] of [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ]) {
+    const queue = this.pathQueue
+    let tail = 0
+    queue[tail++] = sy * COLS + sx
+    for (let head = 0; head < tail; head++) {
+      const x = queue[head]! % COLS,
+        y = (queue[head]! - x) / COLS
+      for (const [dx, dy] of NEIGHBORS) {
         const nx = wrap(x + dx, COLS),
           ny = wrap(y + dy, ROWS)
-        if (this.grid[ny]?.[nx] === 0 && this.distance[ny]![nx] === 999) {
+        if (this.grid[ny]?.[nx] === 0 && this.distance[ny]![nx] === UNREACHED) {
           this.distance[ny]![nx] = this.distance[y]![x]! + 1
-          queue.push([nx, ny])
+          queue[tail++] = ny * COLS + nx
         }
       }
     }
@@ -491,15 +518,10 @@ export class demonsGame {
         let tx = this.player.x,
           ty = this.player.y
         if (this.distanceTo(enemy, this.player) > TILE) {
-          let best = this.distance[cy]?.[cx] ?? 999
+          let best = this.distance[cy]?.[cx] ?? UNREACHED
           tx = (cx + 0.5) * TILE
           ty = (cy + 0.5) * TILE
-          for (const [dx = 0, dy = 0] of [
-            [1, 0],
-            [0, 1],
-            [-1, 0],
-            [0, -1],
-          ]) {
+          for (const [dx, dy] of NEIGHBORS) {
             const distance = this.distance[wrap(cy + dy, ROWS)]![wrap(cx + dx, COLS)]!
             if (distance < best) {
               best = distance
@@ -607,15 +629,15 @@ export class demonsGame {
         }
       }
     }
-    this.portals = this.portals.filter((n) => n.hp > 0)
-    this.enemies = this.enemies.filter((e) => e.hp > 0)
-    this.bullets = this.bullets.filter((b) => b.ttl > 0)
+    retain(this.portals, (n) => n.hp > 0)
+    retain(this.enemies, (e) => e.hp > 0)
+    retain(this.bullets, (b) => b.ttl > 0)
     for (const p of this.particles) {
       p.x = wrap(p.x + p.vx * dt, WORLD_WIDTH)
       p.y = wrap(p.y + p.vy * dt, WORLD_HEIGHT)
       p.ttl -= dt
     }
-    this.particles = this.particles.filter((p) => p.ttl > 0)
+    retain(this.particles, (p) => p.ttl > 0)
     if (!this.portals.length && !this.enemies.length) {
       this.score += 500
       if (this.lives < 3) this.lives++
@@ -648,88 +670,110 @@ export class demonsGame {
     } else this.onSound('hurt')
   }
 
-  draw(ctx: CanvasRenderingContext2D, time: number) {
-    ctx.clearRect(0, 0, WIDTH, HEIGHT)
-    ctx.fillStyle = '#10171b'
-    ctx.fillRect(0, 0, WIDTH, HEIGHT)
+  // Render only visible tiles; raw cell coordinates continue across either seam.
+  // Tiles are gathered into one path per color, so each layer is a single draw call.
+  private drawMaze(ctx: CanvasRenderingContext2D) {
     const cameraX = this.player.x - WIDTH / 2,
       cameraY = this.player.y - HEIGHT / 2
     const startX = Math.floor(cameraX / TILE),
       startY = Math.floor(cameraY / TILE)
-    // Render only visible tiles; raw cell coordinates continue across either seam.
-    for (let gy = startY; gy <= startY + HEIGHT / TILE + 1; gy++) {
-      for (let gx = startX; gx <= startX + WIDTH / TILE + 1; gx++) {
+    const visibleCols = WIDTH / TILE + 2,
+      visibleRows = HEIGHT / TILE + 2
+    const lines = new Path2D(),
+      markers = new Path2D(),
+      blocks = new Path2D(),
+      faces = new Path2D(),
+      lit = new Path2D(),
+      shaded = new Path2D()
+    const left = startX * TILE - cameraX,
+      top = startY * TILE - cameraY
+    for (let i = 0; i <= visibleCols; i++) {
+      lines.moveTo(left + i * TILE, top)
+      lines.lineTo(left + i * TILE, top + visibleRows * TILE)
+    }
+    for (let i = 0; i <= visibleRows; i++) {
+      lines.moveTo(left, top + i * TILE)
+      lines.lineTo(left + visibleCols * TILE, top + i * TILE)
+    }
+    for (let gy = startY; gy < startY + visibleRows; gy++) {
+      for (let gx = startX; gx < startX + visibleCols; gx++) {
         const x = wrap(gx, COLS),
           y = wrap(gy, ROWS)
         const px = gx * TILE - cameraX,
           py = gy * TILE - cameraY
-        ctx.strokeStyle = '#1b2429'
-        ctx.lineWidth = 0.5
-        ctx.strokeRect(px, py, TILE, TILE)
         if (!this.grid[y]![x]) {
           if (x % 4 === 2 && y % 4 === 2) {
-            ctx.fillStyle = '#344047'
-            ctx.fillRect(px - 2, py, 5, 1)
-            ctx.fillRect(px, py - 2, 1, 5)
+            markers.rect(px - 2, py, 5, 1)
+            markers.rect(px, py - 2, 1, 5)
           }
           continue
         }
-        ctx.fillStyle = '#27343c'
-        ctx.fillRect(px, py, TILE, TILE)
-        ctx.fillStyle = '#2e3e47'
-        ctx.fillRect(px + 2, py + 2, TILE - 4, TILE - 4)
-        ctx.strokeStyle = '#4b6069'
-        ctx.lineWidth = 1
-        ctx.beginPath()
+        blocks.rect(px, py, TILE, TILE)
+        faces.rect(px + 2, py + 2, TILE - 4, TILE - 4)
         if (!this.grid[wrap(y - 1, ROWS)]![x]) {
-          ctx.moveTo(px + 0.5, py + 0.5)
-          ctx.lineTo(px + TILE - 0.5, py + 0.5)
+          lit.moveTo(px + 0.5, py + 0.5)
+          lit.lineTo(px + TILE - 0.5, py + 0.5)
         }
         if (!this.grid[y]![wrap(x - 1, COLS)]) {
-          ctx.moveTo(px + 0.5, py + 0.5)
-          ctx.lineTo(px + 0.5, py + TILE - 0.5)
+          lit.moveTo(px + 0.5, py + 0.5)
+          lit.lineTo(px + 0.5, py + TILE - 0.5)
         }
-        ctx.stroke()
-        ctx.strokeStyle = '#18242b'
-        ctx.beginPath()
         if (!this.grid[wrap(y + 1, ROWS)]![x]) {
-          ctx.moveTo(px, py + TILE - 0.5)
-          ctx.lineTo(px + TILE, py + TILE - 0.5)
+          shaded.moveTo(px, py + TILE - 0.5)
+          shaded.lineTo(px + TILE, py + TILE - 0.5)
         }
         if (!this.grid[y]![wrap(x + 1, COLS)]) {
-          ctx.moveTo(px + TILE - 0.5, py)
-          ctx.lineTo(px + TILE - 0.5, py + TILE)
+          shaded.moveTo(px + TILE - 0.5, py)
+          shaded.lineTo(px + TILE - 0.5, py + TILE)
         }
-        ctx.stroke()
       }
     }
+    ctx.lineWidth = 0.5
+    ctx.strokeStyle = '#1b2429'
+    ctx.stroke(lines)
+    ctx.fillStyle = '#344047'
+    ctx.fill(markers)
+    ctx.fillStyle = '#27343c'
+    ctx.fill(blocks)
+    ctx.fillStyle = '#2e3e47'
+    ctx.fill(faces)
+    ctx.lineWidth = 1
+    ctx.strokeStyle = '#4b6069'
+    ctx.stroke(lit)
+    ctx.strokeStyle = '#18242b'
+    ctx.stroke(shaded)
+  }
+
+  draw(ctx: CanvasRenderingContext2D, time: number) {
+    ctx.clearRect(0, 0, WIDTH, HEIGHT)
+    ctx.fillStyle = '#10171b'
+    ctx.fillRect(0, 0, WIDTH, HEIGHT)
+    this.drawMaze(ctx)
     for (const pickup of this.pickups) {
-      const screen = this.worldToScreen(pickup)
-      if (screen.x < -20 || screen.x > WIDTH + 20 || screen.y < -20 || screen.y > HEIGHT + 20)
-        continue
+      const screen = this.onScreen(pickup, 20)
+      if (!screen) continue
       ctx.save()
       ctx.translate(screen.x, screen.y)
       drawPickup(ctx, pickup.kind, time, this.effects)
       ctx.restore()
     }
-    for (const worldPortal of this.portals) {
-      const portal = { ...worldPortal, ...this.worldToScreen(worldPortal) }
-      if (portal.x < -30 || portal.x > WIDTH + 30 || portal.y < -30 || portal.y > HEIGHT + 30)
-        continue
+    for (const portal of this.portals) {
+      const screen = this.onScreen(portal, 30)
+      if (!screen) continue
       ctx.save()
-      ctx.translate(portal.x, portal.y)
-      drawPortal(ctx, time + worldPortal.x, this.effects)
+      ctx.translate(screen.x, screen.y)
+      drawPortal(ctx, time + portal.x, this.effects)
       ctx.restore()
       ctx.fillStyle = '#42324c'
-      ctx.fillRect(portal.x - 13, portal.y + 19, 26, 2)
+      ctx.fillRect(screen.x - 13, screen.y + 19, 26, 2)
       ctx.fillStyle = '#ffad67'
-      ctx.fillRect(portal.x - 13, portal.y + 19, (26 * portal.hp) / (6 + this.wave), 2)
+      ctx.fillRect(screen.x - 13, screen.y + 19, (26 * portal.hp) / (6 + this.wave), 2)
     }
-    for (const worldEnemy of this.enemies) {
-      const enemy = { ...worldEnemy, ...this.worldToScreen(worldEnemy) }
-      if (enemy.x < -20 || enemy.x > WIDTH + 20 || enemy.y < -20 || enemy.y > HEIGHT + 20) continue
+    for (const enemy of this.enemies) {
+      const screen = this.onScreen(enemy, 20)
+      if (!screen) continue
       ctx.save()
-      ctx.translate(enemy.x, enemy.y)
+      ctx.translate(screen.x, screen.y)
       drawDemon(
         ctx,
         this.effects ? Math.sin(time * 9 + enemy.phase) * 1.2 : 0,
@@ -772,9 +816,7 @@ export class demonsGame {
     }
     if (this.status === 'playing' && this.player.invulnerable > 0 && Math.floor(time * 12) % 2)
       ctx.globalAlpha = 0.45
-    const moving =
-      this.status === 'playing' &&
-      ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].some((key) => this.keys.has(key))
+    const moving = this.status === 'playing' && MOVE_KEYS.some((key) => this.keys.has(key))
     if (this.lives <= 0)
       drawHunterDeath(ctx, this.deathElapsed / DEATH_DURATION, this.player.angle, this.effects)
     else
@@ -797,7 +839,8 @@ export class demonsGame {
     ctx.shadowColor = '#91efbd'
     ctx.shadowBlur = this.effects ? 10 : 0
     for (const bullet of this.bullets) {
-      const b = { ...bullet, ...this.worldToScreen(bullet) }
+      const b = this.onScreen(bullet, 20)
+      if (!b) continue
       ctx.strokeStyle = bullet.owner === 'enemy' ? '#ff946b' : '#ceffe2'
       ctx.shadowColor = bullet.owner === 'enemy' ? '#ff785a' : '#91efbd'
       if (bullet.damage > 1) {
@@ -807,29 +850,19 @@ export class demonsGame {
       ctx.lineWidth = bullet.owner === 'enemy' ? 3 : 2
       ctx.beginPath()
       ctx.moveTo(b.x, b.y)
-      ctx.lineTo(b.x - b.vx * 0.017, b.y - b.vy * 0.017)
+      ctx.lineTo(b.x - bullet.vx * 0.017, b.y - bullet.vy * 0.017)
       ctx.stroke()
     }
     ctx.restore()
     for (const p of this.particles) {
+      const screen = this.onScreen(p, 2)
+      if (!screen) continue
       ctx.globalAlpha = p.ttl / p.max
       ctx.fillStyle = p.color
-      const screen = this.worldToScreen(p)
       ctx.fillRect(screen.x - 1, screen.y - 1, 3, 3)
     }
     ctx.globalAlpha = 1
-    const vignette = ctx.createRadialGradient(
-      WIDTH / 2,
-      HEIGHT / 2,
-      HEIGHT * 0.3,
-      WIDTH / 2,
-      HEIGHT / 2,
-      WIDTH * 0.65,
-    )
-    vignette.addColorStop(0, '#05090c00')
-    vignette.addColorStop(1, '#05090c85')
-    ctx.fillStyle = vignette
-    ctx.fillRect(0, 0, WIDTH, HEIGHT)
+    // The vignette is a CSS overlay (.arena-screen:before), so it is not repainted here.
   }
 
   // The minimap shows the whole world centered on the hunter, wrapping like the camera,
@@ -869,14 +902,9 @@ export class demonsGame {
       Math.round(WIDTH * scaleX) - 1,
       Math.round(HEIGHT * scaleY) - 1,
     )
-    const colors: Record<DemonKind, string> = {
-      ravager: '#ff6b52',
-      watcher: '#e27bff',
-      lurker: '#f2b44f',
-    }
     for (const enemy of this.enemies) {
       const { x, y } = at(enemy)
-      ctx.fillStyle = colors[enemy.kind]
+      ctx.fillStyle = MINIMAP_DEMON_COLORS[enemy.kind]
       ctx.fillRect(Math.round(x - 1.5), Math.round(y - 1.5), 3, 3)
     }
     for (const pickup of this.pickups) {

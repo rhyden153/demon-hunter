@@ -1,5 +1,5 @@
-<script setup lang="ts">
-defineProps<{ name: string; size?: number }>()
+<script lang="ts">
+// Module scope: one shared table for every icon instance.
 const paths: Record<string, string> = {
   play: 'm9 5 11 7-11 7V5Z',
   pause: 'M8 5v14M16 5v14',
@@ -19,9 +19,12 @@ const paths: Record<string, string> = {
   star: 'm12 2 3 7h7l-5.5 4.5L18.5 21 12 16.5 5.5 21l2-7.5L2 9h7l3-7Z',
   heart: 'M20 5c-3-3-7-1-8 1-1-2-5-4-8-1-5 5 3 11 8 15 5-4 13-10 8-15Z',
   reset: 'M3 10a9 9 0 1 1 2 8M3 3v7h7',
-  chevron: 'm9 5 7 7-7 7',
   keyboard: 'M3 5h18v14H3V5Zm4 4h0m5 0h0m5 0h0M7 13h0m5 0h0m5 0h0M8 16h8',
 }
+</script>
+
+<script setup lang="ts">
+defineProps<{ name: string; size?: number }>()
 </script>
 
 <template>
