@@ -66,6 +66,7 @@ a {
   color: inherit;
   text-decoration: none;
 }
+.collection-section { margin-top: 44px; }
 svg {
   flex-shrink: 0;
 }
