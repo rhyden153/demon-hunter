@@ -4,4 +4,8 @@ export default defineNuxtConfig({
   devtools: { enabled: false },
   modules: ['@vercel/analytics'],
   extends: ['github:rhyden153/neogames-ui'],
+  runtimeConfig: {
+    leaderboard: { redisUrlEnv: 'DEMON_SCORES_REDIS_URL' },
+    public: { leaderboard: { game: 'demon-hunter' } },
+  },
 })

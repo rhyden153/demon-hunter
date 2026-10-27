@@ -38,6 +38,89 @@ const effects = ref(true)
 const difficulty = ref<'normal' | 'hard'>('normal')
 const runs = ref<Run[]>([])
 const best = computed(() => Math.max(0, ...runs.value.map((r) => r.score)))
+const {
+  boards: leaderboards,
+  failed: leaderboardFailed,
+  refresh: refreshLeaderboards,
+  recordGame,
+  submit: submitScore,
+  savedInitials,
+} = useLeaderboard()
+const SCORE_TABS = [
+  {
+    id: 'weekly',
+    label: 'This week',
+    eyebrow: 'THE WEEKLY HUNT',
+    badge: 'RESETS MONDAY 00:00 UTC',
+    about: 'The ten best runs since Monday, from hunters everywhere.',
+  },
+  {
+    id: 'allTime',
+    label: 'All time',
+    eyebrow: 'THE GLOBAL LEGENDS',
+    badge: 'HUNTERS EVERYWHERE',
+    about: 'The ten best runs ever recorded.',
+  },
+  {
+    id: 'personal',
+    label: 'Yours',
+    eyebrow: 'THE LOCAL LEGENDS',
+    badge: 'SAVED ON THIS DEVICE',
+    about: 'Your best 10 completed runs. All modes included.',
+  },
+] as const
+const scoreTab = ref<(typeof SCORE_TABS)[number]['id']>('weekly')
+const currentTab = computed(() => SCORE_TABS.find((tab) => tab.id === scoreTab.value)!)
+const globalScores = computed(() =>
+  scoreTab.value === 'personal' ? [] : (leaderboards.value?.[scoreTab.value] ?? []),
+)
+// Boards the last run qualified for, and where it placed once the initials were saved.
+const qualified = ref<LeaderboardName[]>([])
+const placed = ref<LeaderboardRanks | null>(null)
+const initials = ref('')
+const initialsInput = ref<HTMLInputElement | null>(null)
+const savingScore = ref(false)
+const saveError = ref('')
+const signing = computed(() => qualified.value.length > 0 && !placed.value)
+const placedText = computed(() =>
+  [
+    placed.value?.weekly && `#${placed.value.weekly} this week`,
+    placed.value?.allTime && `#${placed.value.allTime} all time`,
+  ]
+    .filter(Boolean)
+    .join(' · '),
+)
+const formatDate = (time: number | string) =>
+  new Date(time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+function onInitials(event: Event) {
+  const input = event.target as HTMLInputElement
+  initials.value = input.value = input.value
+    .replace(/[^a-z]/gi, '')
+    .toUpperCase()
+    .slice(0, 3)
+}
+async function saveScore() {
+  if (initials.value.length !== 3) {
+    saveError.value = 'Enter three letters.'
+    return
+  }
+  savingScore.value = true
+  saveError.value = ''
+  try {
+    placed.value = await submitScore(
+      {
+        initials: initials.value,
+        score: state.value.score,
+        detail: `${game.difficulty === 'hard' ? 'Hard' : 'Normal'} · Wave ${state.value.wave}`,
+      },
+      qualified.value,
+    )
+  } catch (error: any) {
+    saveError.value = error?.data?.statusMessage || 'Couldn’t reach the leaderboard. Try again.'
+  } finally {
+    savingScore.value = false
+  }
+}
 const state = ref<Snapshot>({
   status: 'ready',
   score: 0,
@@ -208,6 +291,9 @@ function start() {
   game.difficulty = difficulty.value
   game.start()
   recorded = false
+  qualified.value = []
+  placed.value = null
+  saveError.value = ''
   if (music.value) music.value.currentTime = 0
   if (deathSound.value) {
     deathSound.value.pause()
@@ -224,6 +310,7 @@ function pause() {
 function changeView(next: string) {
   pauseIfRunning()
   view.value = next
+  if (next === 'records') void refreshLeaderboards()
 }
 function openSettings() {
   pauseIfRunning()
@@ -272,7 +359,13 @@ function keyDown(event: KeyboardEvent) {
     return
   if (GAME_KEYS.has(key)) event.preventDefault()
   if ((key === 'p' || key === 'escape') && !event.repeat) pause()
-  else if (key === 'enter' && !event.repeat && ['ready', 'over'].includes(game.status)) start()
+  else if (
+    key === 'enter' &&
+    !event.repeat &&
+    ['ready', 'over'].includes(game.status) &&
+    !signing.value
+  )
+    start()
   else if (key === 'm' && !event.repeat) toggleSound()
   else game.keys.add(key)
 }
@@ -340,6 +433,16 @@ function recordRun() {
   } catch {
     /* Storage is optional. */
   }
+  const finalScore = game.score
+  void recordGame(finalScore).then(async (names) => {
+    // Ignore the result if a new run has already started.
+    if (game.status !== 'over' || game.score !== finalScore) return
+    qualified.value = names
+    if (!names.length) return
+    initials.value ||= savedInitials()
+    await nextTick()
+    initialsInput.value?.focus({ preventScroll: true })
+  })
 }
 function resize() {
   if (!canvas.value) return
@@ -609,15 +712,45 @@ onBeforeUnmount(() => {
               ><span class="enter-hint">Press <kbd>ESC</kbd> to resume</span>
             </div>
             <div v-else-if="state.status === 'over'" class="game-overlay state-overlay">
-              <div class="deploy-tag">CONNECTION TERMINATED</div>
-              <h2>A good run, hunter.</h2>
+              <div class="deploy-tag">
+                {{
+                  qualified.includes('allTime')
+                    ? 'ALL-TIME TOP 10'
+                    : qualified.length
+                      ? 'THIS WEEK’S TOP 10'
+                      : 'CONNECTION TERMINATED'
+                }}
+              </div>
+              <h2>{{ qualified.length ? 'You made the board.' : 'A good run, hunter.' }}</h2>
               <p>
                 {{ state.score.toLocaleString() }} points · {{ state.kills }} demons eliminated ·
                 Wave {{ state.wave }}
               </p>
-              <button class="primary-button" @click="start">
-                <GameIcon name="reset" :size="17" /> GO AGAIN</button
-              ><span class="enter-hint">Your score is saved to the local leaderboard.</span>
+              <form v-if="signing" class="initials-form" @submit.prevent="saveScore">
+                <label for="initials">Enter your initials</label>
+                <div class="initials-row">
+                  <input
+                    id="initials"
+                    ref="initialsInput"
+                    :value="initials"
+                    maxlength="3"
+                    autocomplete="off"
+                    autocapitalize="characters"
+                    spellcheck="false"
+                    @input="onInitials"
+                  /><button class="primary-button" :disabled="savingScore">
+                    {{ savingScore ? 'SAVING…' : 'SIGN IT' }} <GameIcon name="arrow" :size="16" />
+                  </button>
+                </div>
+                <p v-if="saveError" class="initials-error" role="alert">{{ saveError }}</p>
+                <button type="button" class="skip-button" @click="qualified = []">Skip</button>
+              </form>
+              <template v-else>
+                <p v-if="placed" class="placed-ranks">{{ placedText || 'Score saved' }}</p>
+                <button class="primary-button" @click="start">
+                  <GameIcon name="reset" :size="17" /> GO AGAIN</button
+                ><span class="enter-hint">or press <kbd>ENTER</kbd> to go again</span>
+              </template>
             </div>
             <div v-else-if="state.status === 'cleared'" class="game-overlay state-overlay">
               <div class="deploy-tag">+500 CLEAR BONUS</div>
@@ -867,12 +1000,77 @@ onBeforeUnmount(() => {
       <section v-if="view === 'records'" class="records-view">
         <div class="records-header">
           <div>
-            <div class="eyebrow">THE LOCAL LEGENDS</div>
+            <div class="eyebrow">{{ currentTab.eyebrow }}</div>
             <h2>Top runs.</h2>
+            <span class="local-badge"><i class="status-dot"></i> {{ currentTab.badge }}</span>
           </div>
-          <span class="local-badge"><i class="status-dot"></i> SAVED ON THIS DEVICE</span>
+          <div class="score-tabs" role="group" aria-label="Leaderboard">
+            <button
+              v-for="tab in SCORE_TABS"
+              :key="tab.id"
+              :class="{ selected: scoreTab === tab.id }"
+              :aria-pressed="scoreTab === tab.id"
+              @click="scoreTab = tab.id"
+            >
+              {{ tab.label }}
+            </button>
+          </div>
         </div>
-        <div v-if="!runs.length" class="empty-records">
+        <template v-if="scoreTab !== 'personal'">
+          <div v-if="!leaderboards" class="empty-records">
+            <div class="trophy-emblem"><GameIcon name="trophy" :size="38" /></div>
+            <h3>{{ leaderboardFailed ? 'Signal lost.' : 'Tuning in…' }}</h3>
+            <p>
+              {{
+                leaderboardFailed
+                  ? 'We couldn’t reach the leaderboard. Try again in a moment.'
+                  : 'Fetching the latest scores.'
+              }}
+            </p>
+          </div>
+          <div v-else-if="!globalScores.length" class="empty-records">
+            <div class="trophy-emblem"><GameIcon name="trophy" :size="38" /></div>
+            <h3>The board is wide open.</h3>
+            <p>Finish a run and claim the top spot.</p>
+            <button class="primary-button" @click="active ? changeView('play') : start()">
+              {{ active ? 'BACK TO MISSION' : 'ENTER THE MAZE' }}<GameIcon name="arrow" :size="18" />
+            </button>
+          </div>
+          <div v-else class="score-table-wrap">
+            <table class="score-table">
+              <thead>
+                <tr>
+                  <th>RANK</th>
+                  <th>SCORE</th>
+                  <th>HUNTER</th>
+                  <th>RUN</th>
+                  <th>DATE</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(entry, index) in globalScores" :key="`${entry.at}-${entry.initials}`">
+                  <td>
+                    <span :class="{ 'top-rank': index === 0 }">{{
+                      (index + 1).toString().padStart(2, '0')
+                    }}</span>
+                  </td>
+                  <td>{{ entry.score.toLocaleString() }}</td>
+                  <td class="initials-cell">{{ entry.initials }}</td>
+                  <td>{{ entry.detail }}</td>
+                  <td>{{ formatDate(entry.at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="records-footer">
+              <p>{{ currentTab.about }}</p>
+              <button class="primary-button" @click="active ? changeView('play') : start()">
+                {{ active ? 'BACK TO MISSION' : 'ONE MORE RUN'
+                }}<GameIcon name="arrow" :size="16" />
+              </button>
+            </div>
+          </div>
+        </template>
+        <div v-else-if="!runs.length" class="empty-records">
           <div class="trophy-emblem"><GameIcon name="trophy" :size="38" /></div>
           <h3>The top spot is yours to take.</h3>
           <p>Finish your first run to put a score on the board.</p>
@@ -906,19 +1104,12 @@ onBeforeUnmount(() => {
                 <td>
                   <span class="mode-tag">{{ run.difficulty || 'normal' }}</span>
                 </td>
-                <td>
-                  {{
-                    new Date(run.date).toLocaleDateString(undefined, {
-                      month: 'short',
-                      day: 'numeric',
-                    })
-                  }}
-                </td>
+                <td>{{ formatDate(run.date) }}</td>
               </tr>
             </tbody>
           </table>
           <div class="records-footer">
-            <p>Your best 10 completed runs. All modes included.</p>
+            <p>{{ currentTab.about }}</p>
             <button class="primary-button" @click="active ? changeView('play') : start()">
               {{ active ? 'BACK TO MISSION' : 'ONE MORE RUN' }}<GameIcon name="arrow" :size="16" />
             </button>
